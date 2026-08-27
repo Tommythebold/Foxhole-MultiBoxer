@@ -101,6 +101,8 @@ global MainAlwaysOnTopCheck := ""
 global ShowOverlayCheck := ""
 global ShowTooltipsCheck := ""
 global ShowUiTooltipsCheck := ""
+global MouseFocusCheck := ""
+global AutoResetSlotsCheck := ""
 global HotkeysAlwaysOnTopCheck := ""
 global SandboxieAlwaysOnTopCheck := ""
 
@@ -258,6 +260,8 @@ global Settings := Map(
     "ShowOverlay", true,
     "ShowHotkeyTooltips", true,
     "ShowUiTooltips", true,
+    "MouseFocusOn", true,
+    "AutoResetSlots", false,
     "ChangeOutputKeys", false,
     "HotkeysAlwaysOnTop", false,
     "SandboxieAlwaysOnTop", false,
@@ -276,8 +280,10 @@ PrepareBannerAssets()
 SetApplicationIcon()
 LoadConfig()
 BuildMainGui()
+SetMouseFocusEnabled(Settings["MouseFocusOn"], false)
 ApplyAllHotkeys()
 ScanWindows()
+MaybeAutoResetSlots()
 
 if LayoutEditorSelectedLayout >= 1 && LayoutEditorSelectedLayout <= Layouts.Length
     ApplySelectedLayout(false)
@@ -665,6 +671,7 @@ EventDrivenFoxholeDiscovery(*)
     try
     {
         ScanWindows()
+        MaybeAutoResetSlots()
     }
     finally
     {
@@ -933,7 +940,7 @@ SetGuiIcon(guiObj)
 BuildMainGui()
 {
     global MainGui, LV, StatusText, MainTipText, MainTipIndex, MainTips, Settings
-    global MainAlwaysOnTopCheck, ShowOverlayCheck, ShowTooltipsCheck, ShowUiTooltipsCheck
+    global MainAlwaysOnTopCheck, ShowOverlayCheck, ShowTooltipsCheck, ShowUiTooltipsCheck, MouseFocusCheck, AutoResetSlotsCheck
     global MainDynamicControls, MainVisibleTableRows, AvailableBanners, BannerPicture, BannerDropDown
     global CurrentBannerFile, BannerVisible, MainNavButtons, MainPageControls
     global WorkflowFavoriteButtons, WorkflowPresetCombo, WorkflowFavoriteSlotCombo
@@ -942,7 +949,7 @@ BuildMainGui()
     global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowAccountSummary, WorkflowSequenceText
     global WorkflowRunButton, WorkflowStopButton
 
-    MainGui := Gui("+Resize", APP_TITLE)
+    MainGui := Gui("+Resize +0x02000000", APP_TITLE)
     MainGui.SetFont("s9", "Segoe UI")
     SetGuiIcon(MainGui)
 
@@ -990,6 +997,14 @@ BuildMainGui()
     RegisterTooltip(LV, MainListTooltip)
 
     y := tableY + 208
+    resetSlotsBtn := MainGui.AddButton("x12 y" y " w92 h28", "Reset Slots")
+    resetSlotsBtn.OnEvent("Click", (*) => ResetInstanceSlots())
+    RegisterTooltip(resetSlotsBtn, "Compact all active Foxhole windows into consecutive slots and refresh their War slot titles.")
+    AutoResetSlotsCheck := MainGui.AddCheckBox("x114 y" (y + 2) " w120 h24", "Auto Reset?")
+    AutoResetSlotsCheck.Value := Settings["AutoResetSlots"] ? 1 : 0
+    AutoResetSlotsCheck.OnEvent("Click", AutoResetSlotsChanged)
+    RegisterTooltip(AutoResetSlotsCheck, "Automatically compact and rename slots whenever Foxhole windows open or close.")
+    y += 34
     MainGui.AddText("x12 y" y " w535 h22 +0x200", "LAYOUTS")
     y += 25
     LayoutFavoriteButtons := []
@@ -1021,15 +1036,17 @@ BuildMainGui()
     }
     y += 68
     MainGui.AddText("x12 y" (y+4) " w42 h22", "Preset:")
-    WorkflowPresetCombo := MainGui.AddDropDownList("x56 y" y " w150 r10", [])
+    WorkflowPresetCombo := MainGui.AddDropDownList("x56 y" y " w126 r10", [])
     WorkflowPresetCombo.OnEvent("Change", WorkflowPresetChanged)
-    saveBtn := MainGui.AddButton("x212 y" y " w72 h24", "Save New")
+    saveBtn := MainGui.AddButton("x187 y" y " w61 h24", "Save New")
     saveBtn.OnEvent("Click", SaveNewWorkflowPreset)
-    updateBtn := MainGui.AddButton("x289 y" y " w62 h24", "Update")
+    updateBtn := MainGui.AddButton("x253 y" y " w55 h24", "Update")
     updateBtn.OnEvent("Click", UpdateWorkflowPreset)
-    deleteBtn := MainGui.AddButton("x356 y" y " w55 h24", "Delete")
+    renameBtn := MainGui.AddButton("x313 y" y " w58 h24", "Rename")
+    renameBtn.OnEvent("Click", RenameWorkflowPreset)
+    deleteBtn := MainGui.AddButton("x376 y" y " w50 h24", "Delete")
     deleteBtn.OnEvent("Click", DeleteWorkflowPreset)
-    WorkflowFavoriteSlotCombo := MainGui.AddDropDownList("x417 y" y " w120 r9", ["Not Favorite", "Favorite 1", "Favorite 2", "Favorite 3", "Favorite 4", "Favorite 5", "Favorite 6", "Favorite 7", "Favorite 8"])
+    WorkflowFavoriteSlotCombo := MainGui.AddDropDownList("x431 y" y " w106 r9", ["Not Favorite", "Favorite 1", "Favorite 2", "Favorite 3", "Favorite 4", "Favorite 5", "Favorite 6", "Favorite 7", "Favorite 8"])
     WorkflowFavoriteSlotCombo.OnEvent("Change", WorkflowFavoriteSlotChanged)
 
     y += 32
@@ -1060,13 +1077,11 @@ BuildMainGui()
     y += 32
     WorkflowSequenceText := MainGui.AddText("x12 y" y " w525 h42 +Wrap", "Next run: No operations selected.")
     y += 44
-    WorkflowStopButton := MainGui.AddButton("x12 y" y " w80 h28", "Stop")
+    WorkflowRunButton := MainGui.AddButton("x337 y" y " w110 h28 Default", "Run Workflow")
+    WorkflowRunButton.OnEvent("Click", RunSelectedWorkflow)
+    WorkflowStopButton := MainGui.AddButton("x457 y" y " w80 h28", "Stop")
     WorkflowStopButton.Enabled := false
     WorkflowStopButton.OnEvent("Click", StopWorkflow)
-    resetSlotsBtn := MainGui.AddButton("x98 y" y " w92 h28", "Reset Slots")
-    resetSlotsBtn.OnEvent("Click", (*) => ResetInstanceSlots())
-    WorkflowRunButton := MainGui.AddButton("x407 y" y " w130 h28 Default", "Run Workflow")
-    WorkflowRunButton.OnEvent("Click", RunSelectedWorkflow)
 
     y += 36
     BannerDropDown := ""
@@ -1105,6 +1120,11 @@ BuildMainGui()
     ShowUiTooltipsCheck.Value := Settings["ShowUiTooltips"] ? 1 : 0
     ShowUiTooltipsCheck.OnEvent("Click", ShowUiTooltipsChanged)
 
+    y += 26
+    MouseFocusCheck := MainGui.AddCheckBox("x12 y" y " w160 h24", "Mouse Focus On?")
+    MouseFocusCheck.Value := Settings["MouseFocusOn"] ? 1 : 0
+    MouseFocusCheck.OnEvent("Click", MouseFocusSettingChanged)
+    y += 30
 
     MainPageControls := []
     MainDynamicControls := []
@@ -1143,7 +1163,7 @@ BuildMainGui()
     RefreshLayoutFavoriteControls()
     UpdateWorkflowAccountSummary()
     UpdateWorkflowSequencePreview()
-    MainGui.Show("w559 h" (y + 34))
+    MainGui.Show("w559 h" GetMainPageRequiredHeight())
     ApplyGuiAlwaysOnTop(MainGui, Settings["MainAlwaysOnTop"])
     SwitchMainPage("Main")
 }
@@ -1387,7 +1407,7 @@ BuildLayoutEditorGui()
 {
     global LayoutEditorGui, LayoutEditorCombo, LayoutEditorFavoriteSlotCombo, MainGui
 
-    LayoutEditorGui := Gui("+Parent" MainGui.Hwnd " -Caption +Resize", "Layout Editor")
+    LayoutEditorGui := Gui("+Parent" MainGui.Hwnd " -Caption -Border", "Layout Editor")
     LayoutEditorGui.SetFont("s9", "Segoe UI")
     LayoutEditorGui.MarginX := 12
     LayoutEditorGui.MarginY := 10
@@ -1502,7 +1522,7 @@ SetGuiRedraw(guiObj, enabled)
 
 BuildLayoutEditorValueRow(label, prop, slotIndex, value, y, values, controls)
 {
-    global LayoutEditorRowsGui
+    global LayoutEditorGui
 
     buttonW := 34
     maxButtonW := 42
@@ -1513,7 +1533,7 @@ BuildLayoutEditorValueRow(label, prop, slotIndex, value, y, values, controls)
     groupW := (buttonW * 8) + (maxButtonW * 2) + (gap * 11) + labelW + valueW
     x := Floor((510 - groupW) / 2)
 
-    maxNegativeBtn := LayoutEditorRowsGui.AddButton("x" x " y" y " w" maxButtonW " h24", "Max")
+    maxNegativeBtn := LayoutEditorGui.AddButton("x" x " y" y " w" maxButtonW " h24", "Max")
     maxNegativeBtn.OnEvent("Click", MakeLayoutMaxHandler(slotIndex, prop, -1))
     RegisterLayoutEditorTooltip(maxNegativeBtn, LayoutSlotTooltip.Bind(slotIndex, "Max", prop, -1))
     controls.Push(maxNegativeBtn)
@@ -1521,18 +1541,19 @@ BuildLayoutEditorValueRow(label, prop, slotIndex, value, y, values, controls)
 
     for _, delta in [-100, -50, -10, -1]
     {
-        btn := LayoutEditorRowsGui.AddButton("x" x " y" y " w" buttonW " h24", String(delta))
+        btn := LayoutEditorGui.AddButton("x" x " y" y " w" buttonW " h24", String(delta))
         btn.OnEvent("Click", MakeLayoutAdjustHandler(slotIndex, prop, delta))
         RegisterLayoutEditorTooltip(btn, LayoutSlotTooltip.Bind(slotIndex, "Adjust", prop, delta))
         controls.Push(btn)
         x += buttonW + gap
     }
 
-    labelCtrl := LayoutEditorRowsGui.AddText("x" x " y" y " w" labelW " h24 +0x200 Center", label)
+    labelCtrl := LayoutEditorGui.AddText("x" x " y" y " w" labelW " h24 +0x200 Center", label)
     controls.Push(labelCtrl)
     x += labelW + gap
 
-    valueCtrl := LayoutEditorRowsGui.AddText("x" x " y" y " w" valueW " h24 +0x200 Center", String(value))
+    valueCtrl := LayoutEditorGui.AddEdit("x" x " y" y " w" valueW " h24 Center Number", String(value))
+    valueCtrl.OnEvent("LoseFocus", MakeLayoutManualValueHandler(slotIndex, prop))
     controls.Push(valueCtrl)
     values[prop] := valueCtrl
     RegisterLayoutEditorTooltip(valueCtrl, LayoutSlotTooltip.Bind(slotIndex, "Value", prop))
@@ -1540,14 +1561,14 @@ BuildLayoutEditorValueRow(label, prop, slotIndex, value, y, values, controls)
 
     for _, delta in [1, 10, 50, 100]
     {
-        btn := LayoutEditorRowsGui.AddButton("x" x " y" y " w" buttonW " h24", "+" delta)
+        btn := LayoutEditorGui.AddButton("x" x " y" y " w" buttonW " h24", "+" delta)
         btn.OnEvent("Click", MakeLayoutAdjustHandler(slotIndex, prop, delta))
         RegisterLayoutEditorTooltip(btn, LayoutSlotTooltip.Bind(slotIndex, "Adjust", prop, delta))
         controls.Push(btn)
         x += buttonW + gap
     }
 
-    maxPositiveBtn := LayoutEditorRowsGui.AddButton("x" x " y" y " w" maxButtonW " h24", "Max")
+    maxPositiveBtn := LayoutEditorGui.AddButton("x" x " y" y " w" maxButtonW " h24", "Max")
     maxPositiveBtn.OnEvent("Click", MakeLayoutMaxHandler(slotIndex, prop, 1))
     RegisterLayoutEditorTooltip(maxPositiveBtn, LayoutSlotTooltip.Bind(slotIndex, "Max", prop, 1))
     controls.Push(maxPositiveBtn)
@@ -1705,41 +1726,39 @@ RefreshLayoutEditorRowsOnly()
 
 BuildCurrentLayoutEditorRows()
 {
-    global LayoutEditorGui, LayoutEditorRowsGui, LayoutEditorSlots, LayoutEditorValueCtrls
+    global LayoutEditorGui, LayoutEditorSlots, LayoutEditorValueCtrls
     global LayoutEditorSlotControls, LayoutEditorExpandedSlots, LayoutEditorRequiredHeight
 
-
-    LayoutEditorRowsGui := Gui("+Parent" LayoutEditorGui.Hwnd " -Caption")
-    LayoutEditorRowsGui.SetFont("s9", "Segoe UI")
-    LayoutEditorRowsGui.MarginX := 0
-    LayoutEditorRowsGui.MarginY := 0
-
-    y := 0
+    y := 100
     for slotIndex, slot in LayoutEditorSlots
     {
         expanded := LayoutEditorExpandedSlots.Has(slot.slot) ? LayoutEditorExpandedSlots[slot.slot] : false
         toggleText := (expanded ? "▼ " : "▶ ") "SLOT " slot.slot
-        toggleBtn := LayoutEditorRowsGui.AddButton("x12 y" y " w92 h24", toggleText)
+        toggleBtn := LayoutEditorGui.AddButton("x12 y" y " w82 h24", toggleText)
         toggleBtn.OnEvent("Click", MakeLayoutExpandHandler(slotIndex))
 
-        monitorLabel := LayoutEditorRowsGui.AddText("x110 y" y " w52 h24 +0x200", "Monitor:")
-        monitorCombo := LayoutEditorRowsGui.AddComboBox("x164 y" y " w128 h24 r5", GetMonitorDisplayNames())
+        monitorLabel := LayoutEditorGui.AddText("x100 y" y " w50 h24 +0x200", "Monitor:")
+        monitorCombo := LayoutEditorGui.AddComboBox("x151 y" y " w112 h24 r5", GetMonitorDisplayNames())
         monitorCombo.Value := ResolveLayoutMonitorNumber(slot)
         monitorCombo.OnEvent("Change", MakeLayoutMonitorHandler(slotIndex))
-        showBtn := LayoutEditorRowsGui.AddButton("x298 y" y " w72 h24", "Show/Hide")
-        removeBtn := LayoutEditorRowsGui.AddButton("x373 y" y " w57 h24", "Remove")
-        matchBtn := LayoutEditorRowsGui.AddButton("x433 y" y " w55 h24", "Match")
+        aspectCheck := LayoutEditorGui.AddCheckBox("x269 y" y " w92 h24", "Keep Ratio")
+        aspectCheck.Value := HasProp(slot, "keepAspect") && slot.keepAspect ? 1 : 0
+        aspectCheck.OnEvent("Click", MakeLayoutAspectHandler(slotIndex))
+        showBtn := LayoutEditorGui.AddButton("x363 y" y " w62 h24", "Preview")
+        removeBtn := LayoutEditorGui.AddButton("x428 y" y " w58 h24", "Remove")
+        matchBtn := LayoutEditorGui.AddButton("x489 y" y " w48 h24", "Match")
         showBtn.OnEvent("Click", MakeLayoutShowHandler(slotIndex))
         removeBtn.OnEvent("Click", MakeLayoutRemoveHandler(slotIndex))
         matchBtn.OnEvent("Click", MakeLayoutMatchBelowHandler(slotIndex))
 
         RegisterLayoutEditorTooltip(toggleBtn, LayoutSlotTooltip.Bind(slotIndex, "Header"))
         RegisterLayoutEditorTooltip(monitorCombo, LayoutSlotTooltip.Bind(slotIndex, "Monitor"))
+        RegisterLayoutEditorTooltip(aspectCheck, "Keep this slot's current width-to-height ratio while resizing either dimension.")
         RegisterLayoutEditorTooltip(showBtn, LayoutSlotTooltip.Bind(slotIndex, "Show"))
         RegisterLayoutEditorTooltip(removeBtn, LayoutSlotTooltip.Bind(slotIndex, "Remove"))
         RegisterLayoutEditorTooltip(matchBtn, LayoutSlotTooltip.Bind(slotIndex, "Match"))
 
-        controls := [toggleBtn, monitorLabel, monitorCombo, showBtn, removeBtn, matchBtn]
+        controls := [toggleBtn, monitorLabel, monitorCombo, aspectCheck, showBtn, removeBtn, matchBtn]
         values := Map()
         y += 28
 
@@ -1758,12 +1777,8 @@ BuildCurrentLayoutEditorRows()
         LayoutEditorSlotControls.Push(controls)
     }
 
-    rowsHeight := Max(1, y)
-    LayoutEditorRowsGui.Show("x0 y100 w510 h" rowsHeight " NoActivate")
-
-    newHeight := Max(140, 100 + rowsHeight + 42)
-    LayoutEditorRequiredHeight := newHeight
-    LayoutEditorGui.Move(, , 510, newHeight)
+    LayoutEditorRequiredHeight := Max(140, y + 42)
+    LayoutEditorGui.Move(, , 559, LayoutEditorRequiredHeight)
 }
 
 MakeLayoutExpandHandler(index)
@@ -1784,20 +1799,52 @@ ToggleLayoutSlotExpanded(index)
 
 DestroyLayoutEditorRows()
 {
-    global LayoutEditorRowsGui, LayoutEditorSlotControls, LayoutEditorValueCtrls
-
+    global LayoutEditorSlotControls, LayoutEditorValueCtrls
 
     ClearLayoutEditorTooltips()
-
-    if IsObject(LayoutEditorRowsGui)
-    {
-        try LayoutEditorRowsGui.Hide()
-        try LayoutEditorRowsGui.Destroy()
-        LayoutEditorRowsGui := ""
-    }
+    for controls in LayoutEditorSlotControls
+        for ctrl in controls
+            try DllCall("DestroyWindow", "Ptr", ctrl.Hwnd)
+    for values in LayoutEditorValueCtrls
+        for _, ctrl in values
+            try DllCall("DestroyWindow", "Ptr", ctrl.Hwnd)
 
     LayoutEditorSlotControls := []
     LayoutEditorValueCtrls := []
+}
+
+MakeLayoutManualValueHandler(index, prop)
+{
+    return (ctrl, *) => CommitLayoutManualValue(index, prop, ctrl)
+}
+
+CommitLayoutManualValue(index, prop, ctrl)
+{
+    global LayoutEditorSlots
+    if index < 1 || index > LayoutEditorSlots.Length
+        return
+    raw := Trim(ctrl.Value)
+    if !RegExMatch(raw, "^-?\d+$")
+    {
+        ctrl.Value := String(LayoutEditorSlots[index].%prop%)
+        return
+    }
+    SetLayoutSlotValue(index, prop, Integer(raw))
+}
+
+MakeLayoutAspectHandler(index)
+{
+    return (ctrl, *) => SetLayoutAspectLock(index, ctrl.Value = 1)
+}
+
+SetLayoutAspectLock(index, enabled)
+{
+    global LayoutEditorSlots
+    if index < 1 || index > LayoutEditorSlots.Length
+        return
+    slot := LayoutEditorSlots[index]
+    slot.keepAspect := !!enabled
+    slot.aspectRatio := slot.height > 0 ? slot.width / slot.height : 1.0
 }
 
 MakeLayoutMaxHandler(index, prop, direction)
@@ -1815,29 +1862,15 @@ MaximizeLayoutSlotValue(index, prop, direction)
     bounds := GetLayoutMonitorBounds(slot)
 
     if prop = "x"
-        slot.x := direction < 0 ? 0 : Max(0, bounds.width - slot.width)
+        value := direction < 0 ? 0 : Max(0, bounds.width - slot.width)
     else if prop = "y"
-        slot.y := direction < 0 ? 0 : Max(0, bounds.height - slot.height)
+        value := direction < 0 ? 0 : Max(0, bounds.height - slot.height)
     else if prop = "width"
-        slot.width := direction < 0 ? Min(50, Max(1, bounds.width - slot.x)) : Max(1, bounds.width - slot.x)
-    else if prop = "height"
-        slot.height := direction < 0 ? Min(50, Max(1, bounds.height - slot.y)) : Max(1, bounds.height - slot.y)
+        value := direction < 0 ? Min(50, Max(1, bounds.width - slot.x)) : Max(1, bounds.width - slot.x)
+    else
+        value := direction < 0 ? Min(50, Max(1, bounds.height - slot.y)) : Max(1, bounds.height - slot.y)
 
-    ClampLayoutSlotToAssignedMonitor(slot)
-
-    if LayoutEditorValueCtrls.Length >= index
-    {
-        ctrls := LayoutEditorValueCtrls[index]
-        for _, field in ["x", "y", "width", "height"]
-        {
-            if ctrls.Has(field)
-                ctrls[field].Text := String(slot.%field%)
-        }
-    }
-
-    ApplyLayoutSlotToWindow(slot)
-    if LayoutEditorOverlays.Has(slot.slot)
-        UpdateLayoutPreview(index)
+    SetLayoutSlotValue(index, prop, value)
 }
 
 MakeLayoutAdjustHandler(index, prop, delta)
@@ -1845,37 +1878,47 @@ MakeLayoutAdjustHandler(index, prop, delta)
     return (*) => AdjustLayoutSlot(index, prop, delta)
 }
 
-AdjustLayoutSlot(index, prop, delta)
+SetLayoutSlotValue(index, prop, value)
 {
     global LayoutEditorSlots, LayoutEditorValueCtrls, LayoutEditorOverlays
     if index < 1 || index > LayoutEditorSlots.Length
         return
 
     slot := LayoutEditorSlots[index]
-    value := slot.%prop% + delta
-
     if prop = "x" || prop = "y"
-        value := ClampLayoutCoordinate(slot, prop, value)
-    else if prop = "width" || prop = "height"
-        value := ClampLayoutSize(slot, prop, value)
-
-    slot.%prop% := value
+        slot.%prop% := ClampLayoutCoordinate(slot, prop, value)
+    else
+    {
+        slot.%prop% := ClampLayoutSize(slot, prop, value)
+        if HasProp(slot, "keepAspect") && slot.keepAspect
+        {
+            ratio := HasProp(slot, "aspectRatio") && slot.aspectRatio > 0 ? slot.aspectRatio : (slot.height > 0 ? slot.width / slot.height : 1.0)
+            if prop = "width"
+                slot.height := ClampLayoutSize(slot, "height", Round(slot.width / ratio))
+            else if prop = "height"
+                slot.width := ClampLayoutSize(slot, "width", Round(slot.height * ratio))
+        }
+    }
 
     ClampLayoutSlotToAssignedMonitor(slot)
-
     if LayoutEditorValueCtrls.Length >= index
     {
         ctrls := LayoutEditorValueCtrls[index]
         for _, field in ["x", "y", "width", "height"]
-        {
             if ctrls.Has(field)
-                ctrls[field].Text := String(slot.%field%)
-        }
+                ctrls[field].Value := String(slot.%field%)
     }
-
     ApplyLayoutSlotToWindow(slot)
     if LayoutEditorOverlays.Has(slot.slot)
         UpdateLayoutPreview(index)
+}
+
+AdjustLayoutSlot(index, prop, delta)
+{
+    global LayoutEditorSlots
+    if index < 1 || index > LayoutEditorSlots.Length
+        return
+    SetLayoutSlotValue(index, prop, LayoutEditorSlots[index].%prop% + delta)
 }
 
 ClampLayoutCoordinate(slot, prop, value)
@@ -2020,7 +2063,9 @@ CreateDefaultLayoutSlot(slotNumber)
         x: 0,
         y: 0,
         width: 960,
-        height: 540
+        height: 540,
+        keepAspect: false,
+        aspectRatio: 960 / 540
     }
     ClampLayoutSlotToAssignedMonitor(slot)
     return slot
@@ -2077,7 +2122,9 @@ CreateLayoutSlotFromAbsoluteRect(slotNumber, absoluteX, absoluteY, width, height
         x: absoluteX - left,
         y: absoluteY - top,
         width: width,
-        height: height
+        height: height,
+        keepAspect: false,
+        aspectRatio: height > 0 ? width / height : 1.0
     }
     ClampLayoutSlotToAssignedMonitor(slot)
     return slot
@@ -2125,7 +2172,7 @@ ChangeLayoutSlotMonitor(index, monitorNumber)
         values := LayoutEditorValueCtrls[index]
         for _, field in ["x", "y", "width", "height"]
             if values.Has(field)
-                values[field].Text := String(slot.%field%)
+                values[field].Value := String(slot.%field%)
     }
 
     ApplyLayoutSlotToWindow(slot)
@@ -2337,6 +2384,8 @@ MatchLayoutSlotsBelow(index)
         target.y := source.y
         target.width := source.width
         target.height := source.height
+        target.keepAspect := HasProp(source, "keepAspect") ? source.keepAspect : false
+        target.aspectRatio := HasProp(source, "aspectRatio") ? source.aspectRatio : (source.height > 0 ? source.width / source.height : 1.0)
         targetIndex++
     }
 
@@ -2350,15 +2399,17 @@ MatchLayoutSlotsBelow(index)
         }
         values := LayoutEditorValueCtrls[targetIndex]
         slot := LayoutEditorSlots[targetIndex]
-        try values["x"].Text := String(slot.x)
-        try values["y"].Text := String(slot.y)
-        try values["width"].Text := String(slot.width)
-        try values["height"].Text := String(slot.height)
+        try values["x"].Value := String(slot.x)
+        try values["y"].Value := String(slot.y)
+        try values["width"].Value := String(slot.width)
+        try values["height"].Value := String(slot.height)
         if targetIndex <= LayoutEditorSlotControls.Length
         {
             controls := LayoutEditorSlotControls[targetIndex]
             if controls.Length >= 3
                 try controls[3].Value := ResolveLayoutMonitorNumber(slot)
+            if controls.Length >= 4
+                try controls[4].Value := (HasProp(slot, "keepAspect") && slot.keepAspect) ? 1 : 0
         }
 
         ApplyLayoutSlotToWindow(slot)
@@ -2383,7 +2434,9 @@ CloneLayoutSlots(source)
             x: slot.x,
             y: slot.y,
             width: slot.width,
-            height: slot.height
+            height: slot.height,
+            keepAspect: HasProp(slot, "keepAspect") ? slot.keepAspect : false,
+            aspectRatio: HasProp(slot, "aspectRatio") && slot.aspectRatio > 0 ? slot.aspectRatio : (slot.height > 0 ? slot.width / slot.height : 1.0)
         }
         ClampLayoutSlotToAssignedMonitor(copy)
         result.Push(copy)
@@ -2547,7 +2600,7 @@ BuildHotkeysGui()
     global HotkeysGui, RebindButtons, CurrentKeys, IntervalEdits, Settings, MainGui
     global ActionNames, IntervalSettings, DefaultOutputKeys, CurrentOutputKeys, OutputKeyButtons, ChangeOutputKeysCheck
 
-    HotkeysGui := Gui("+Parent" MainGui.Hwnd " -Caption", "Hotkeys")
+    HotkeysGui := Gui("+Parent" MainGui.Hwnd " -Caption +0x04000000", "Hotkeys")
     HotkeysGui.SetFont("s9", "Segoe UI")
     OnMessage(0x0200, HotkeysGuiMouseMove)
 
@@ -2632,9 +2685,9 @@ ToggleChangeOutputKeys(ctrl, *)
 BuildSBGui()
 {
     global SBGui, SandboxieRowCountEdit, SandboxieRowCount, MainGui
-    global SandboxieSteamAllButton, SandboxieFoxholeAllButton, SandboxieSetupAllButton, SandboxieDeleteAllButton
+    global SandboxieSteamAllButton, SandboxieFoxholeAllButton
 
-    SBGui := Gui("+Parent" MainGui.Hwnd " -Caption", "Accounts & Sandboxes")
+    SBGui := Gui("+Parent" MainGui.Hwnd " -Caption +0x04000000", "Accounts & Sandboxes")
     SBGui.SetFont("s9", "Segoe UI")
     SBGui.MarginX := 12
     SBGui.MarginY := 10
@@ -2645,24 +2698,17 @@ BuildSBGui()
     rowsBtn.OnEvent("Click", ApplySandboxieRowCount)
     sbSettingsBtn := RegisterTooltip(SBGui.AddButton("x135 y8 w32 h24", "⚙"), "Configure the paths to SandMan.exe, Steam.exe, and the Foxhole executable.")
     sbSettingsBtn.OnEvent("Click", OpenSandboxieSettings)
-    SandboxieSetupAllButton := SBGui.AddButton("x334 y8 w150 h24", "Setup All Sandboxes")
-    SandboxieSetupAllButton.OnEvent("Click", SetupAllSandboxieSandboxes)
-    RegisterTooltip(SandboxieSetupAllButton, (*) => SandboxieSummaryTooltip("Setup"))
-    SandboxieDeleteAllButton := SBGui.AddButton("x334 y36 w145 h24", "Reset Sandboxes")
-    SandboxieDeleteAllButton.OnEvent("Click", DeleteAllProgramSandboxContents)
-    RegisterTooltip(SandboxieDeleteAllButton, (*) => SandboxieSummaryTooltip("Reset"))
-
-    SBGui.AddText("x12 y68 w20 h20", "#")
-    SBGui.AddText("x40 y68 w125 h20", "Account")
-    SandboxieSteamAllButton := SBGui.AddButton("x173 y64 w70 h28", "Steam")
+    SBGui.AddText("x12 y46 w20 h20", "#")
+    SBGui.AddText("x40 y46 w125 h20", "Account")
+    SandboxieSteamAllButton := SBGui.AddButton("x173 y42 w70 h28", "Steam")
     SandboxieSteamAllButton.OnEvent("Click", StartSelectedSandboxieSteamLaunches)
     RegisterTooltip(SandboxieSteamAllButton, (*) => SandboxieSummaryTooltip("Steam"))
-    credHeader := RegisterTooltip(SBGui.AddText("x251 y68 w42 h20 +0x200 Center", "Cred."), "Open, edit, or clear the Windows Credential Manager entry used to log this account into Steam.")
-    SandboxieFoxholeAllButton := SBGui.AddButton("x299 y64 w70 h28", "Foxhole")
+    credHeader := RegisterTooltip(SBGui.AddText("x251 y46 w42 h20 +0x200 Center", "Cred."), "Open, edit, or clear the Windows Credential Manager entry used to log this account into Steam.")
+    SandboxieFoxholeAllButton := SBGui.AddButton("x299 y42 w70 h28", "Foxhole")
     SandboxieFoxholeAllButton.OnEvent("Click", StartSelectedFoxholeLaunches)
     RegisterTooltip(SandboxieFoxholeAllButton, (*) => SandboxieSummaryTooltip("Foxhole"))
-    mainHeader := RegisterTooltip(SBGui.AddText("x377 y68 w55 h20", "Main"), "Exactly one account can be Main. It uses unsandboxed Steam and Foxhole and does not use Sandboxie credentials.")
-    selectedHeader := RegisterTooltip(SBGui.AddText("x437 y68 w65 h20", "Included"), "Included accounts are used by bulk Steam, Foxhole, and Relaunch Steam actions.")
+    mainHeader := RegisterTooltip(SBGui.AddText("x377 y46 w55 h20", "Main"), "Exactly one account can be Main. It uses unsandboxed Steam and Foxhole and does not use Sandboxie credentials.")
+    selectedHeader := RegisterTooltip(SBGui.AddText("x437 y46 w65 h20", "Included"), "Included accounts are used by bulk Steam, Foxhole, and Relaunch Steam actions.")
 
     SBGui.OnEvent("Close", CloseSBGui)
     SBGui.OnEvent("Escape", (*) => SwitchMainPage("Main"))
@@ -2735,7 +2781,7 @@ RebuildSandboxieRows(count)
 
         SandboxieAccounts.Push({ name: "", selected: false, main: false, steamUsername: "" })
 
-    rowY := 96
+    rowY := 74
     for index in Range(1, count)
     {
         account := SandboxieAccounts[index]
@@ -2775,9 +2821,9 @@ RebuildSandboxieRows(count)
         rowY += 30
     }
 
-    height := rowY + 18
-    if height < 190
-        height := 190
+    height := rowY + 14
+    if height < 150
+        height := 150
     SBGui.Move(, , 535, height)
 }
 
@@ -3771,12 +3817,6 @@ StartCombinedSteamFoxholeLaunch(accountIndices := "", minimizeSteam := true, *)
         return
     }
 
-    if Instances.Length > 0 && CountLiveInstances() > 0
-    {
-        StatusText.Text := "Status: Close existing Foxhole windows before launching Steam & Foxhole."
-        return
-    }
-
     paths := TryRepairSteamLaunchPaths()
     problems := []
     needsSandboxie := false
@@ -4720,18 +4760,37 @@ StartSelectedFoxholeLaunches(*)
     StartFoxholeLaunchesForIndices(selected, false)
 }
 
+IsFoxholeAccountAlreadyOpen(accountIndex, account)
+{
+    global Instances
+    accountName := Trim(account.name)
+    for inst in Instances
+    {
+        if !IsWindowAlive(inst.hwnd)
+            continue
+        existingName := GetAccountNameForInstance(inst)
+        if accountName != "" && existingName != "" && StrLower(existingName) = StrLower(accountName)
+            return true
+        if inst.slot = accountIndex
+            return true
+    }
+    return false
+}
+
 StartFoxholeLaunchesForIndices(selected, fromCombined := false)
 {
     global SandboxieAccounts, SequentialLaunchActive, SequentialLaunchQueue, Settings
     global SequentialLaunchPosition, SequentialLaunchExpectedSlot, SequentialLaunchSkipped
     global SandboxieFoxholeAllButton, MainLaunchSteamButton, MainLaunchSteamFoxholeButton, MainLaunchFoxholeButton
-    global StatusText, Instances, CombinedLaunchActive
+    global StatusText, Instances, CombinedLaunchActive, WorkflowRunning
 
     if SequentialLaunchActive
         return false
 
     SequentialLaunchQueue := []
     SequentialLaunchSkipped := 0
+    alreadyOpen := 0
+    ScanWindows()
 
     for index in selected
     {
@@ -4741,6 +4800,11 @@ StartFoxholeLaunchesForIndices(selected, fromCombined := false)
             continue
         }
         account := SandboxieAccounts[index]
+        if IsFoxholeAccountAlreadyOpen(index, account)
+        {
+            alreadyOpen++
+            continue
+        }
         if Trim(Settings["SandboxieFoxholeExe"]) = "" || !FileExist(Settings["SandboxieFoxholeExe"])
         {
             SequentialLaunchSkipped++
@@ -4759,13 +4823,14 @@ StartFoxholeLaunchesForIndices(selected, fromCombined := false)
 
     if SequentialLaunchQueue.Length = 0
     {
+        if alreadyOpen
+        {
+            StatusText.Text := "Status: All " alreadyOpen " selected Foxhole account(s) are already open."
+            if WorkflowRunning
+                FinishWorkflow("Workflow completed. All selected Foxhole accounts were already open.")
+            return true
+        }
         StatusText.Text := SequentialLaunchSkipped ? "Status: No selected Foxhole executables found. Skipped " SequentialLaunchSkipped " account(s)." : "Status: No accounts selected."
-        return false
-    }
-
-    if Instances.Length > 0 && CountLiveInstances() > 0
-    {
-        StatusText.Text := "Status: Close existing Foxhole windows before launching a selected batch."
         return false
     }
 
@@ -4925,6 +4990,7 @@ FinishSequentialFoxholeLaunches(skipped := 0)
 
     RebuildAllTitleOverlays()
     RefreshList()
+    MaybeAutoResetSlots()
 
     if IsObject(SandboxieFoxholeAllButton)
         SandboxieFoxholeAllButton.Enabled := true
@@ -5257,8 +5323,36 @@ IsWindowAlive(hwnd)
     return hwnd && WinExist("ahk_id " hwnd)
 }
 
+EnsureUniqueInstanceSlots()
+{
+    global Instances, MaxPracticalInstances
+    used := Map()
+    changed := []
+    for inst in Instances
+    {
+        if !IsWindowAlive(inst.hwnd)
+            continue
+        slot := Integer(inst.slot)
+        if slot < 1 || slot > MaxPracticalInstances || used.Has(slot)
+        {
+            replacement := 1
+            while replacement <= MaxPracticalInstances && used.Has(replacement)
+                replacement++
+            if replacement > MaxPracticalInstances
+                continue
+            inst.slot := replacement
+            changed.Push(inst)
+            slot := replacement
+        }
+        used[slot] := inst.hwnd
+    }
+    for inst in changed
+        RenameInstance(inst)
+}
+
 RefreshList()
 {
+    EnsureUniqueInstanceSlots()
     global LV, Instances, SelectedIndex, StatusText
 
     selectedHwnd := 0
@@ -5312,6 +5406,63 @@ RefreshList()
     StatusText.Text := "Status: " liveCount " Foxhole instance(s) online, " emptyCount " slot(s) available."
 }
 
+
+AutoResetSlotsChanged(ctrl, *)
+{
+    global Settings
+    Settings["AutoResetSlots"] := ctrl.Value = 1
+    SaveConfig()
+    if Settings["AutoResetSlots"]
+    {
+        ScanWindows()
+        MaybeAutoResetSlots(true)
+    }
+}
+
+MaybeAutoResetSlots(force := false)
+{
+    global Settings, Instances, SequentialLaunchActive
+    if !Settings["AutoResetSlots"] || SequentialLaunchActive
+        return false
+
+    live := []
+    hasEmpty := false
+    for inst in Instances
+    {
+        if IsWindowAlive(inst.hwnd)
+            live.Push(inst)
+        else
+            hasEmpty := true
+    }
+    SortInstancesBySlot(live)
+
+    needsReset := force || hasEmpty
+    for index, inst in live
+    {
+        if inst.slot != index
+        {
+            needsReset := true
+            break
+        }
+        expectedPrefix := "War " index
+        try title := WinGetTitle("ahk_id " inst.hwnd)
+        catch
+        {
+            title := ""
+        }
+        if !RegExMatch(title, "i)^" expectedPrefix "(?:\s+-|$)")
+        {
+            needsReset := true
+            break
+        }
+    }
+
+    if !needsReset
+        return false
+    ResetInstanceSlots(false)
+    return true
+}
+
 HotkeysSummary(inst)
 {
     s := ""
@@ -5330,11 +5481,12 @@ HotkeysSummary(inst)
     return s = "" ? "—" : Trim(s)
 }
 
-ResetInstanceSlots(*)
+ResetInstanceSlots(scanFirst := true, *)
 {
     global Instances, SelectedIndex, StatusText
 
-    ScanWindows()
+    if scanFirst
+        ScanWindows()
 
     selectedHwnd := 0
     if SelectedIndex >= 1 && SelectedIndex <= Instances.Length
@@ -7180,24 +7332,35 @@ HideHotkeysHotkeyTooltip()
 
 ToggleMouseFocus()
 {
-    global MouseFocusEnabled, HoverFocusedHwnd, StatusText
+    global MouseFocusEnabled
+    SetMouseFocusEnabled(!MouseFocusEnabled, true)
+}
 
-    MouseFocusEnabled := !MouseFocusEnabled
+SetMouseFocusEnabled(enabled, showFeedback := true)
+{
+    global MouseFocusEnabled, HoverFocusedHwnd, StatusText, Settings, MouseFocusCheck
+
+    MouseFocusEnabled := !!enabled
+    Settings["MouseFocusOn"] := MouseFocusEnabled
     HoverFocusedHwnd := 0
-
+    SetTimer(FocusHoveredFoxholeWindow, 0)
     if MouseFocusEnabled
-    {
         SetTimer(FocusHoveredFoxholeWindow, 50)
-        StatusText.Text := "Status: Mouse Focus ON."
-        ShowMouseFocusTooltip()
-        FocusHoveredFoxholeWindow()
-    }
-    else
+
+    if IsObject(MouseFocusCheck)
+        MouseFocusCheck.Value := MouseFocusEnabled ? 1 : 0
+
+    if showFeedback
     {
-        SetTimer(FocusHoveredFoxholeWindow, 0)
-        StatusText.Text := "Status: Mouse Focus OFF."
+        StatusText.Text := "Status: Mouse Focus " (MouseFocusEnabled ? "ON." : "OFF.")
         ShowMouseFocusTooltip()
     }
+    SaveConfig()
+}
+
+MouseFocusSettingChanged(ctrl, *)
+{
+    SetMouseFocusEnabled(ctrl.Value = 1, true)
 }
 
 ShowMouseFocusTooltip()
@@ -7215,31 +7378,30 @@ ShowMouseFocusTooltip()
 
 FocusHoveredFoxholeWindow()
 {
-    global Instances, MouseFocusEnabled, HoverFocusedHwnd
+    global MouseFocusEnabled, HoverFocusedHwnd
 
     if !MouseFocusEnabled
         return
 
-    MouseGetPos(,, &mouseHwnd)
-    if !mouseHwnd
+    mouseHwnd := 0
+    try MouseGetPos(,, &mouseHwnd)
+
+    rootHwnd := 0
+    if mouseHwnd
+        rootHwnd := DllCall("GetAncestor", "Ptr", mouseHwnd, "UInt", 2, "Ptr")
+
+    if !rootHwnd || !FindInstanceByHwnd(rootHwnd)
+    {
+        HoverFocusedHwnd := 0
+        return
+    }
+
+    if rootHwnd = HoverFocusedHwnd
         return
 
-    rootHwnd := DllCall("GetAncestor", "ptr", mouseHwnd, "uint", 2, "ptr")
-    if !rootHwnd
-        rootHwnd := mouseHwnd
-
-    idx := FindInstanceByHwnd(rootHwnd)
-    if !idx
-        return
-
-    if HoverFocusedHwnd = rootHwnd && WinActive("ahk_id " rootHwnd)
-        return
-
-    if !IsWindowAlive(rootHwnd)
-        return
-
-    if ForceForegroundWindow(rootHwnd)
-        HoverFocusedHwnd := rootHwnd
+    HoverFocusedHwnd := rootHwnd
+    if !WinActive("ahk_id " rootHwnd)
+        try WinActivate("ahk_id " rootHwnd)
 }
 
 ForceForegroundWindow(hwnd)
@@ -7265,7 +7427,6 @@ ForceForegroundWindow(hwnd)
         if targetThread && targetThread != currentThread
             DllCall("AttachThreadInput", "UInt", currentThread, "UInt", targetThread, "Int", 1)
 
-        DllCall("BringWindowToTop", "Ptr", hwnd)
         WinActivate("ahk_id " hwnd)
         DllCall("SetForegroundWindow", "Ptr", hwnd)
         DllCall("SetActiveWindow", "Ptr", hwnd)
@@ -7943,6 +8104,7 @@ SwitchMainPage(page, *)
     if !IsObject(MainGui)
         return
     CurrentMainPage := page
+    SetGuiRedraw(MainGui, false)
     for ctrl in MainPageControls
         try ctrl.Visible := page = "Main"
     for name, btn in MainNavButtons
@@ -7983,7 +8145,7 @@ SwitchMainPage(page, *)
         EnsureLastSelectedLayout()
         RefreshLayoutEditorGui()
         pageY := GetEmbeddedPageY()
-        LayoutEditorGui.Show("x12 y" pageY " w510 h" LayoutEditorRequiredHeight " NoActivate")
+        LayoutEditorGui.Show("x0 y" pageY " w559 h" LayoutEditorRequiredHeight " NoActivate")
         MainGui.Show("w559 h" (pageY + LayoutEditorRequiredHeight + 12))
     }
     else
@@ -7994,6 +8156,9 @@ SwitchMainPage(page, *)
         UpdateWorkflowAccountSummary()
         MainGui.Show("w559 h" GetMainPageRequiredHeight())
     }
+
+    SetGuiRedraw(MainGui, true)
+    DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
 }
 
 
@@ -8012,7 +8177,7 @@ GetMainPageRequiredHeight()
             bottom := Max(bottom, y + h)
         }
     }
-    return Max(420, bottom + 14)
+    return Max(440, bottom + 44)
 }
 
 GetEmbeddedPageY()
@@ -8054,7 +8219,7 @@ ReflowCurrentPageAfterBannerChange()
     }
     else if CurrentMainPage = "Layouts" && IsObject(LayoutEditorGui) && LayoutEditorGui.Hwnd
     {
-        LayoutEditorGui.Show("x12 y" pageY " w510 h" LayoutEditorRequiredHeight " NoActivate")
+        LayoutEditorGui.Show("x0 y" pageY " w559 h" LayoutEditorRequiredHeight " NoActivate")
         MainGui.Show("w559 h" (pageY + LayoutEditorRequiredHeight + 12))
     }
     else
@@ -8396,6 +8561,40 @@ UpdateWorkflowPreset(*)
     WorkflowPresetCombo.Value := idx
 }
 
+
+RenameWorkflowPreset(*)
+{
+    global WorkflowPresets, WorkflowPresetCombo
+    idx := WorkflowPresetCombo.Value
+    if idx < 1 || idx > WorkflowPresets.Length
+    {
+        MsgBox("Select a workflow preset first.", "Workflows", "Icon!")
+        return
+    }
+
+    oldName := WorkflowPresets[idx].name
+    result := InputBox("Enter a new name for this workflow preset:", "Rename Workflow", "w380 h140", oldName)
+    if result.Result != "OK"
+        return
+    newName := Trim(result.Value)
+    if newName = "" || newName = oldName
+        return
+
+    for otherIndex, preset in WorkflowPresets
+    {
+        if otherIndex != idx && StrLower(preset.name) = StrLower(newName)
+        {
+            MsgBox("A workflow preset with that name already exists.", "Workflows", "Icon!")
+            return
+        }
+    }
+
+    WorkflowPresets[idx].name := newName
+    SaveWorkflowPresetsConfig()
+    RefreshWorkflowPresetControls()
+    WorkflowPresetCombo.Value := idx
+}
+
 DeleteWorkflowPreset(*)
 {
     global WorkflowPresets, WorkflowPresetCombo, WorkflowFavorites
@@ -8702,6 +8901,8 @@ LoadConfig()
     Settings["ShowOverlay"] := IniRead(CONFIG_FILE, "Settings", "ShowOverlay", "1") = "1"
     Settings["ShowHotkeyTooltips"] := IniRead(CONFIG_FILE, "Settings", "ShowHotkeyTooltips", "1") = "1"
     Settings["ShowUiTooltips"] := IniRead(CONFIG_FILE, "Settings", "ShowUiTooltips", "1") = "1"
+    Settings["MouseFocusOn"] := IniRead(CONFIG_FILE, "Settings", "MouseFocusOn", "1") = "1"
+    Settings["AutoResetSlots"] := IniRead(CONFIG_FILE, "Settings", "AutoResetSlots", "0") = "1"
     Settings["ChangeOutputKeys"] := IniRead(CONFIG_FILE, "Settings", "ChangeOutputKeys", "0") = "1"
     Settings["HotkeysAlwaysOnTop"] := IniRead(CONFIG_FILE, "Settings", "HotkeysAlwaysOnTop", "0") = "1"
     Settings["SandboxieAlwaysOnTop"] := IniRead(CONFIG_FILE, "Settings", "SandboxieAlwaysOnTop", "0") = "1"
@@ -8738,8 +8939,12 @@ LoadConfig()
                 x: Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_X", "0")),
                 y: Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_Y", "0")),
                 width: Max(100, Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_W", "960"))),
-                height: Max(100, Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_H", "540")))
+                height: Max(100, Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_H", "540"))),
+                keepAspect: IniRead(CONFIG_FILE, section, "Slot" slotNo "_KeepAspect", "0") = "1",
+                aspectRatio: Float(IniRead(CONFIG_FILE, section, "Slot" slotNo "_AspectRatio", "0"))
             }
+            if slot.aspectRatio <= 0
+                slot.aspectRatio := slot.height > 0 ? slot.width / slot.height : 1.0
             if slot.monitorWidth <= 0 || slot.monitorHeight <= 0
             {
                 bounds := GetLayoutMonitorBounds(slot)
@@ -8861,6 +9066,8 @@ SaveLayoutsConfig()
             sectionText .= "`n" prefix "Y=" slot.y
             sectionText .= "`n" prefix "W=" slot.width
             sectionText .= "`n" prefix "H=" slot.height
+            sectionText .= "`n" prefix "KeepAspect=" ((HasProp(slot, "keepAspect") && slot.keepAspect) ? 1 : 0)
+            sectionText .= "`n" prefix "AspectRatio=" (HasProp(slot, "aspectRatio") && slot.aspectRatio > 0 ? slot.aspectRatio : (slot.height > 0 ? slot.width / slot.height : 1.0))
         }
         IniWrite(sectionText, CONFIG_FILE, section)
     }
@@ -8896,6 +9103,8 @@ SaveConfig()
     IniWrite(Settings["ShowOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowOverlay")
     IniWrite(Settings["ShowHotkeyTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowHotkeyTooltips")
     IniWrite(Settings["ShowUiTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowUiTooltips")
+    IniWrite(Settings["MouseFocusOn"] ? "1" : "0", CONFIG_FILE, "Settings", "MouseFocusOn")
+    IniWrite(Settings["AutoResetSlots"] ? "1" : "0", CONFIG_FILE, "Settings", "AutoResetSlots")
     IniWrite(Settings["ChangeOutputKeys"] ? "1" : "0", CONFIG_FILE, "Settings", "ChangeOutputKeys")
     IniWrite(Settings["HotkeysAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "HotkeysAlwaysOnTop")
     IniWrite(Settings["SandboxieAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "SandboxieAlwaysOnTop")
