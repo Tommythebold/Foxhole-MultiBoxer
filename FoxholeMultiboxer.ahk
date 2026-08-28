@@ -53,6 +53,11 @@ global CurrentOutputKeys := Map()
 global OutputKeyButtons := Map()
 global OutputCaptureHook := ""
 global ChangeOutputKeysCheck := ""
+global SwapByAccountCheck := ""
+global AccountSwapKeys := Map()
+global AccountSwapButtons := Map()
+global AccountSwapTargetLabels := Map()
+global HotkeysExpandedSections := Map("Game", false, "Manage", false, "Swap", false)
 
 global Instances := []
 global SelectedIndex := 0
@@ -249,6 +254,14 @@ global WorkflowRunButton := ""
 global WorkflowStopButton := ""
 global WorkflowFavoriteSlotCombo := ""
 global WorkflowRunning := false
+global WorkflowEditorExpanded := false
+global WorkflowEditorHeader := ""
+global WorkflowEditorControls := []
+global WorkflowBelowEditorControls := []
+global WorkflowEditorCollapseHeight := 0
+global SettingsSectionExpanded := false
+global SettingsSectionHeader := ""
+global SettingsSectionControls := []
 global WorkflowPendingFoxholeAfterSteam := false
 
 global Settings := Map(
@@ -263,6 +276,7 @@ global Settings := Map(
     "MouseFocusOn", true,
     "AutoResetSlots", false,
     "ChangeOutputKeys", false,
+    "SwapByAccount", true,
     "HotkeysAlwaysOnTop", false,
     "SandboxieAlwaysOnTop", false,
     "SandboxieSandManExe", "C:\Program Files\Sandboxie-Plus\SandMan.exe",
@@ -948,6 +962,8 @@ BuildMainGui()
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
     global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowAccountSummary, WorkflowSequenceText
     global WorkflowRunButton, WorkflowStopButton
+    global WorkflowEditorExpanded, WorkflowEditorHeader, WorkflowEditorControls, WorkflowBelowEditorControls, WorkflowEditorCollapseHeight
+    global SettingsSectionExpanded, SettingsSectionHeader, SettingsSectionControls
 
     MainGui := Gui("+Resize +0x02000000", APP_TITLE)
     MainGui.SetFont("s9", "Segoe UI")
@@ -1004,6 +1020,7 @@ BuildMainGui()
     AutoResetSlotsCheck.Value := Settings["AutoResetSlots"] ? 1 : 0
     AutoResetSlotsCheck.OnEvent("Click", AutoResetSlotsChanged)
     RegisterTooltip(AutoResetSlotsCheck, "Automatically compact and rename slots whenever Foxhole windows open or close.")
+    StatusText := MainGui.AddText("x245 y" (y + 2) " w292 h24 +0x200", "Status: Starting...")
     y += 34
     MainGui.AddText("x12 y" y " w535 h22 +0x200", "LAYOUTS")
     y += 25
@@ -1035,6 +1052,11 @@ BuildMainGui()
         WorkflowFavoriteButtons.Push(btn)
     }
     y += 68
+    WorkflowEditorHeader := MainGui.AddButton("x12 y" y " w525 h28 +Left", (WorkflowEditorExpanded ? "▼  " : "▶  ") "EDIT WORKFLOWS")
+    WorkflowEditorHeader.OnEvent("Click", ToggleWorkflowEditorSection)
+    RegisterTooltip(WorkflowEditorHeader, "Expand or collapse the workflow preset editor. Workflow favorite buttons remain visible.")
+    y += 32
+    workflowEditorStartY := y
     MainGui.AddText("x12 y" (y+4) " w42 h22", "Preset:")
     WorkflowPresetCombo := MainGui.AddDropDownList("x56 y" y " w126 r10", [])
     WorkflowPresetCombo.OnEvent("Change", WorkflowPresetChanged)
@@ -1075,15 +1097,22 @@ BuildMainGui()
         ctrl.OnEvent("Click", UpdateWorkflowSequencePreview)
 
     y += 32
-    WorkflowSequenceText := MainGui.AddText("x12 y" y " w525 h42 +Wrap", "Next run: No operations selected.")
-    y += 44
+    WorkflowSequenceText := MainGui.AddText("x12 y" y " w315 h30 +Wrap +0x200", "Next run: No operations selected.")
     WorkflowRunButton := MainGui.AddButton("x337 y" y " w110 h28 Default", "Run Workflow")
     WorkflowRunButton.OnEvent("Click", RunSelectedWorkflow)
     WorkflowStopButton := MainGui.AddButton("x457 y" y " w80 h28", "Stop")
     WorkflowStopButton.Enabled := false
     WorkflowStopButton.OnEvent("Click", StopWorkflow)
 
-    y += 36
+    y += 34
+    workflowEditorEndY := y
+    WorkflowEditorCollapseHeight := workflowEditorEndY - workflowEditorStartY
+
+    SettingsSectionHeader := MainGui.AddButton("x12 y" y " w525 h28 +Left", (SettingsSectionExpanded ? "▼  " : "▶  ") "SETTINGS")
+    SettingsSectionHeader.OnEvent("Click", ToggleSettingsSection)
+    RegisterTooltip(SettingsSectionHeader, "Expand or collapse the main-page banner and behavior settings.")
+    y += 32
+    settingsSectionStartY := y
     BannerDropDown := ""
     if AvailableBanners.Length > 0
     {
@@ -1105,7 +1134,6 @@ BuildMainGui()
         BannerDropDown.OnEvent("Change", BannerSelectionChanged)
     }
 
-    StatusText := MainGui.AddText("x198 y" y " w339 h30", "Status: Starting...")
     y += 30
     MainAlwaysOnTopCheck := MainGui.AddCheckBox("x12 y" y " w125 h24", "Always on top?")
     MainAlwaysOnTopCheck.Value := Settings["MainAlwaysOnTop"] ? 1 : 0
@@ -1125,6 +1153,51 @@ BuildMainGui()
     MouseFocusCheck.Value := Settings["MouseFocusOn"] ? 1 : 0
     MouseFocusCheck.OnEvent("Click", MouseFocusSettingChanged)
     y += 30
+    settingsSectionEndY := y
+
+    WorkflowEditorControls := []
+    WorkflowBelowEditorControls := []
+    for ctrlHwnd, ctrl in MainGui
+    {
+        if !IsObject(ctrl) || !ctrl.Hwnd || ctrl.Hwnd = WorkflowEditorHeader.Hwnd
+            continue
+        try
+        {
+            ctrl.GetPos(&workflowCtrlX, &workflowCtrlY, &workflowCtrlW, &workflowCtrlH)
+            if workflowCtrlY >= workflowEditorStartY && workflowCtrlY < workflowEditorEndY
+                WorkflowEditorControls.Push(ctrl)
+            else if workflowCtrlY >= workflowEditorEndY
+                WorkflowBelowEditorControls.Push(ctrl)
+        }
+    }
+    SettingsSectionControls := []
+    for ctrlHwnd, ctrl in MainGui
+    {
+        if !IsObject(ctrl) || !ctrl.Hwnd || ctrl.Hwnd = SettingsSectionHeader.Hwnd
+            continue
+        try
+        {
+            ctrl.GetPos(&settingsCtrlX, &settingsCtrlY, &settingsCtrlW, &settingsCtrlH)
+            if settingsCtrlY >= settingsSectionStartY && settingsCtrlY < settingsSectionEndY
+                SettingsSectionControls.Push(ctrl)
+        }
+    }
+    if !SettingsSectionExpanded
+    {
+        for ctrl in SettingsSectionControls
+            ctrl.Visible := false
+    }
+
+    if !WorkflowEditorExpanded
+    {
+        for ctrl in WorkflowEditorControls
+            ctrl.Visible := false
+        for ctrl in WorkflowBelowEditorControls
+        {
+            ctrl.GetPos(&workflowCtrlX, &workflowCtrlY, &workflowCtrlW, &workflowCtrlH)
+            ctrl.Move(, workflowCtrlY - WorkflowEditorCollapseHeight)
+        }
+    }
 
     MainPageControls := []
     MainDynamicControls := []
@@ -1166,6 +1239,72 @@ BuildMainGui()
     MainGui.Show("w559 h" GetMainPageRequiredHeight())
     ApplyGuiAlwaysOnTop(MainGui, Settings["MainAlwaysOnTop"])
     SwitchMainPage("Main")
+}
+
+ToggleWorkflowEditorSection(*)
+{
+    global WorkflowEditorExpanded, WorkflowEditorHeader, WorkflowEditorControls
+    global WorkflowBelowEditorControls, WorkflowEditorCollapseHeight, MainGui, CurrentMainPage
+
+    if !IsObject(WorkflowEditorHeader) || !WorkflowEditorHeader.Hwnd
+        return
+
+    SetGuiRedraw(MainGui, false)
+    WorkflowEditorExpanded := !WorkflowEditorExpanded
+    direction := WorkflowEditorExpanded ? 1 : -1
+
+    if WorkflowEditorExpanded
+    {
+        for ctrl in WorkflowBelowEditorControls
+        {
+            try
+            {
+                ctrl.GetPos(&x, &y, &w, &h)
+                ctrl.Move(, y + WorkflowEditorCollapseHeight)
+            }
+        }
+        for ctrl in WorkflowEditorControls
+            try ctrl.Visible := CurrentMainPage = "Main"
+    }
+    else
+    {
+        for ctrl in WorkflowEditorControls
+            try ctrl.Visible := false
+        for ctrl in WorkflowBelowEditorControls
+        {
+            try
+            {
+                ctrl.GetPos(&x, &y, &w, &h)
+                ctrl.Move(, y - WorkflowEditorCollapseHeight)
+            }
+        }
+    }
+
+    WorkflowEditorHeader.Text := (WorkflowEditorExpanded ? "▼  " : "▶  ") "EDIT WORKFLOWS"
+    if CurrentMainPage = "Main"
+        MainGui.Move(, , 559, GetMainPageRequiredHeight())
+    SetGuiRedraw(MainGui, true)
+    DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
+}
+
+ToggleSettingsSection(*)
+{
+    global SettingsSectionExpanded, SettingsSectionHeader, SettingsSectionControls
+    global MainGui, CurrentMainPage
+
+    if !IsObject(SettingsSectionHeader) || !SettingsSectionHeader.Hwnd
+        return
+
+    SetGuiRedraw(MainGui, false)
+    SettingsSectionExpanded := !SettingsSectionExpanded
+    for ctrl in SettingsSectionControls
+        try ctrl.Visible := SettingsSectionExpanded && CurrentMainPage = "Main"
+
+    SettingsSectionHeader.Text := (SettingsSectionExpanded ? "▼  " : "▶  ") "SETTINGS"
+    if CurrentMainPage = "Main"
+        MainGui.Move(, , 559, GetMainPageRequiredHeight())
+    SetGuiRedraw(MainGui, true)
+    DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
 }
 
 ResizeMainGuiForRows(rowCount := "")
@@ -2598,24 +2737,60 @@ MakeUnbindTooltipProvider(action)
 BuildHotkeysGui()
 {
     global HotkeysGui, RebindButtons, CurrentKeys, IntervalEdits, Settings, MainGui
-    global ActionNames, IntervalSettings, DefaultOutputKeys, CurrentOutputKeys, OutputKeyButtons, ChangeOutputKeysCheck
+    global IntervalSettings, DefaultOutputKeys, CurrentOutputKeys, OutputKeyButtons, ChangeOutputKeysCheck
+    global SandboxieAccounts, AccountSwapKeys, AccountSwapButtons, AccountSwapTargetLabels
+    global SwapByAccountCheck, CurrentMainPage, HotkeysExpandedSections
+
+    oldGui := HotkeysGui
+    if IsObject(oldGui)
+    {
+        try oldGui.Destroy()
+    }
+
+    RebindButtons := Map()
+    IntervalEdits := Map()
+    OutputKeyButtons := Map()
+    AccountSwapButtons := Map()
+    AccountSwapTargetLabels := Map()
 
     HotkeysGui := Gui("+Parent" MainGui.Hwnd " -Caption +0x04000000", "Hotkeys")
     HotkeysGui.SetFont("s9", "Segoe UI")
     OnMessage(0x0200, HotkeysGuiMouseMove)
 
     HotkeysGui.AddText("x12 y10 w476 h22 +0x200", "HOTKEYS")
-    HotkeysGui.AddText("x12 y34 w166 h18 +Center", "Hotkey / Current Binding")
-    HotkeysGui.AddText("x184 y34 w52 h18 +Center", "Default")
-    HotkeysGui.AddText("x242 y34 w58 h18 +Center", "Unbind")
-    HotkeysGui.AddText("x306 y34 w62 h18 +Center", "Output")
-    HotkeysGui.AddText("x374 y34 w114 h18 +Center", "Interval")
+    y := 38
 
-    rowTop := 55
-    rowStep := 34
-    for rowIndex, action in ActionNames
+    y := BuildHotkeySection("Game", "GAME KEYS", ["AutoClick", "AutoWalk", "AutoReverse", "ClickHold", "RightHold", "VSpam", "TrainSlow"], y)
+    y := BuildHotkeySection("Manage", "MANAGE GAMES", ["MouseFocus", "SwitchSlot", "Swap", "SwapFirst", "ShowFoxhole", "ShowSteam"], y)
+    y := BuildAccountSwapSection(y)
+
+    HotkeysGui.OnEvent("Close", (*) => SwitchMainPage("Main"))
+    HotkeysGui.OnEvent("Escape", (*) => SwitchMainPage("Main"))
+}
+
+BuildHotkeySection(sectionKey, title, actions, y)
+{
+    global HotkeysGui, HotkeysExpandedSections, RebindButtons, CurrentKeys, IntervalEdits, Settings
+    global IntervalSettings, DefaultOutputKeys, CurrentOutputKeys, OutputKeyButtons, ChangeOutputKeysCheck
+
+    expanded := HotkeysExpandedSections.Has(sectionKey) && HotkeysExpandedSections[sectionKey]
+    header := HotkeysGui.AddButton("x12 y" y " w476 h28 +Left", (expanded ? "▼  " : "▶  ") title)
+    header.OnEvent("Click", MakeHotkeysSectionToggleHandler(sectionKey))
+    RegisterTooltip(header, (expanded ? "Collapse " : "Expand ") title ".")
+    y += 32
+
+    if !expanded
+        return y
+
+    HotkeysGui.AddText("x12 y" y " w166 h18 +Center", "Hotkey / Current Binding")
+    HotkeysGui.AddText("x184 y" y " w52 h18 +Center", "Default")
+    HotkeysGui.AddText("x242 y" y " w58 h18 +Center", "Unbind")
+    HotkeysGui.AddText("x306 y" y " w62 h18 +Center", "Output")
+    HotkeysGui.AddText("x374 y" y " w114 h18 +Center", "Interval")
+    y += 21
+
+    for action in actions
     {
-        y := rowTop + ((rowIndex - 1) * rowStep)
         RebindButtons[action] := HotkeysGui.AddButton("x12 y" y " w166 h28", ActionButtonText(action, CurrentKeys[action]))
         RebindButtons[action].OnEvent("Click", MakeHotkeysRebindHandler(action))
         RegisterTooltip(RebindButtons[action], HotkeyActionTooltip.Bind(action))
@@ -2652,25 +2827,145 @@ BuildHotkeysGui()
         }
         else
             HotkeysGui.AddText("x374 y" (y + 5) " w114 h20 +Center", "—")
+
+        y += 34
     }
 
-    optionY := rowTop + (ActionNames.Length * rowStep) + 4
-    ChangeOutputKeysCheck := HotkeysGui.AddCheckBox("x12 y" optionY " w250 h24", "Change Output Keys? (AZERTY etc.)")
-    ChangeOutputKeysCheck.Value := Settings["ChangeOutputKeys"] ? 1 : 0
-    ChangeOutputKeysCheck.OnEvent("Click", ToggleChangeOutputKeys)
-    RegisterTooltip(ChangeOutputKeysCheck, "Show or hide controls for changing the keys sent to Foxhole. This does not change the activation hotkeys.")
+    if sectionKey = "Game"
+    {
+        ChangeOutputKeysCheck := HotkeysGui.AddCheckBox("x12 y" y " w250 h24", "Change Output Keys? (AZERTY etc.)")
+        ChangeOutputKeysCheck.Value := Settings["ChangeOutputKeys"] ? 1 : 0
+        ChangeOutputKeysCheck.OnEvent("Click", ToggleChangeOutputKeys)
+        RegisterTooltip(ChangeOutputKeysCheck, "Show or hide controls for changing the keys sent to Foxhole. This does not change the activation hotkeys.")
+        y += 30
+    }
 
-    HotkeysGui.OnEvent("Close", (*) => SwitchMainPage("Main"))
-    HotkeysGui.OnEvent("Escape", (*) => SwitchMainPage("Main"))
+    return y + 4
+}
+
+BuildAccountSwapSection(y)
+{
+    global HotkeysGui, HotkeysExpandedSections, SandboxieAccounts, AccountSwapKeys
+    global AccountSwapButtons, AccountSwapTargetLabels, SwapByAccountCheck, Settings
+
+    expanded := HotkeysExpandedSections.Has("Swap") && HotkeysExpandedSections["Swap"]
+    header := HotkeysGui.AddButton("x12 y" y " w476 h28 +Left", (expanded ? "▼  " : "▶  ") "SWAP TO ACCOUNT")
+    header.OnEvent("Click", MakeHotkeysSectionToggleHandler("Swap"))
+    RegisterTooltip(header, (expanded ? "Collapse" : "Expand") " the generated Swap to N hotkeys.")
+    y += 32
+
+    if !expanded
+        return y
+
+    HotkeysGui.AddText("x12 y" y " w476 h18", "Generated from named rows on the Accounts page")
+    y += 23
+    HotkeysGui.AddText("x12 y" y " w226 h18 +Center", "Hotkey / Current Binding")
+    HotkeysGui.AddText("x244 y" y " w56 h18 +Center", "Default")
+    HotkeysGui.AddText("x306 y" y " w62 h18 +Center", "Unbind")
+    HotkeysGui.AddText("x374 y" y " w114 h18 +Center", "Target")
+    y += 21
+
+    for accountIndex, account in SandboxieAccounts
+    {
+        accountName := Trim(account.name)
+        if accountName = ""
+            continue
+        if !AccountSwapKeys.Has(accountIndex)
+            AccountSwapKeys[accountIndex] := ""
+
+        label := "Swap to " accountIndex
+        btn := HotkeysGui.AddButton("x12 y" y " w226 h28", label " | " DisplayNameForHotkeyString(AccountSwapKeys[accountIndex]))
+        btn.OnEvent("Click", MakeAccountSwapRebindHandler(accountIndex))
+        AccountSwapButtons[accountIndex] := btn
+        RegisterTooltip(btn, "Bind " label ". Account mode follows " accountName "; slot mode always activates slot " accountIndex ".")
+
+        resetBtn := HotkeysGui.AddButton("x244 y" y " w56 h28", "Reset")
+        resetBtn.OnEvent("Click", MakeAccountSwapActionHandler(ResetAccountSwapHotkey, accountIndex))
+        RegisterTooltip(resetBtn, "Reset " label " to its default: Unbound.")
+
+        unbindBtn := HotkeysGui.AddButton("x306 y" y " w62 h28", "Unbind")
+        unbindBtn.OnEvent("Click", MakeAccountSwapActionHandler(UnbindAccountSwapHotkey, accountIndex))
+        RegisterTooltip(unbindBtn, "Remove the current binding for " label ".")
+
+        targetText := Settings["SwapByAccount"] ? accountName : "Slot " accountIndex
+        targetCtrl := HotkeysGui.AddText("x374 y" (y + 5) " w114 h20 +Center", targetText)
+        AccountSwapTargetLabels[accountIndex] := targetCtrl
+        y += 34
+    }
+
+    SwapByAccountCheck := HotkeysGui.AddCheckBox("x12 y" y " w250 h24", "Swap by Account?")
+    SwapByAccountCheck.Value := Settings["SwapByAccount"] ? 1 : 0
+    SwapByAccountCheck.OnEvent("Click", SwapByAccountChanged)
+    RegisterTooltip(SwapByAccountCheck, "On: Swap to N follows account row N wherever that account currently is. Off: Swap to N always activates Foxhole slot N.")
+    return y + 34
+}
+
+MakeHotkeysSectionToggleHandler(sectionKey)
+{
+    return (*) => ToggleHotkeysSection(sectionKey)
+}
+
+ToggleHotkeysSection(sectionKey)
+{
+    global HotkeysExpandedSections, CurrentMainPage
+    current := HotkeysExpandedSections.Has(sectionKey) ? HotkeysExpandedSections[sectionKey] : false
+    HotkeysExpandedSections[sectionKey] := !current
+    BuildHotkeysGui()
+    if CurrentMainPage = "Hotkeys"
+        SwitchMainPage("Hotkeys")
+}
+
+GetNamedAccountHotkeyCount()
+{
+    global SandboxieAccounts
+    count := 0
+    for account in SandboxieAccounts
+        if Trim(account.name) != ""
+            count++
+    return count
 }
 
 GetHotkeysGuiRequiredHeight()
 {
-    global ActionNames
-    rowTop := 55
-    rowStep := 34
-    optionY := rowTop + (ActionNames.Length * rowStep) + 4
-    return optionY + 36
+    global HotkeysExpandedSections
+    height := 38
+    height += 32
+    if HotkeysExpandedSections.Has("Game") && HotkeysExpandedSections["Game"]
+        height += 21 + (7 * 34) + 34
+    height += 32
+    if HotkeysExpandedSections.Has("Manage") && HotkeysExpandedSections["Manage"]
+        height += 21 + (6 * 34) + 4
+    height += 32
+    if HotkeysExpandedSections.Has("Swap") && HotkeysExpandedSections["Swap"]
+        height += 23 + 21 + (GetNamedAccountHotkeyCount() * 34) + 34
+    return height + 8
+}
+
+RefreshAccountSwapHotkeysGui()
+{
+    global CurrentMainPage
+    BuildHotkeysGui()
+    if CurrentMainPage = "Hotkeys"
+        SwitchMainPage("Hotkeys")
+}
+
+UpdateAccountSwapTargetLabels()
+{
+    global AccountSwapTargetLabels, SandboxieAccounts, Settings
+    for accountIndex, ctrl in AccountSwapTargetLabels
+    {
+        accountName := accountIndex <= SandboxieAccounts.Length ? Trim(SandboxieAccounts[accountIndex].name) : ""
+        ctrl.Text := Settings["SwapByAccount"] ? accountName : "Slot " accountIndex
+    }
+}
+
+SwapByAccountChanged(ctrl, *)
+{
+    global Settings, StatusText
+    Settings["SwapByAccount"] := ctrl.Value = 1
+    UpdateAccountSwapTargetLabels()
+    SaveConfig()
+    StatusText.Text := "Status: Swap-to hotkeys now target " (Settings["SwapByAccount"] ? "accounts." : "fixed slot numbers.")
 }
 
 ToggleChangeOutputKeys(ctrl, *)
@@ -2755,6 +3050,7 @@ ApplySandboxieRowCount(*)
     SandboxieRows := []
 
     BuildSBGui()
+    RefreshAccountSwapHotkeysGui()
     SwitchMainPage("Accounts")
 }
 
@@ -3164,6 +3460,7 @@ SaveSandboxieName(index, ctrl)
     newName := Trim(ctrl.Value)
     SandboxieAccounts[index].name := newName
     SaveConfig()
+    RefreshAccountSwapHotkeysGui()
 }
 
 SaveSandboxieSelection(index, ctrl)
@@ -7224,7 +7521,63 @@ GlobalSharedHotkey(keyName)
         }
     }
 
+    for accountIndex, accountKey in AccountSwapKeys
+    {
+        if accountKey != "" && StrLower(accountKey) = normalizedKey
+            ActivateAccountSwapTarget(accountIndex)
+    }
+
     RefreshList()
+}
+
+ActivateAccountSwapTarget(accountIndex)
+{
+    global Settings, SandboxieAccounts, Instances, StatusText
+
+    ScanWindows()
+    targetInst := ""
+    targetDescription := "slot " accountIndex
+
+    if Settings["SwapByAccount"]
+    {
+        if accountIndex < 1 || accountIndex > SandboxieAccounts.Length
+            return
+        accountName := Trim(SandboxieAccounts[accountIndex].name)
+        if accountName = ""
+            return
+        targetDescription := accountName
+        for inst in Instances
+        {
+            if StrLower(Trim(GetAccountNameForInstance(inst))) = StrLower(accountName)
+            {
+                targetInst := inst
+                break
+            }
+        }
+    }
+    else
+    {
+        for inst in Instances
+        {
+            if inst.slot = accountIndex
+            {
+                targetInst := inst
+                break
+            }
+        }
+    }
+
+    if !IsObject(targetInst) || !IsWindowAlive(targetInst.hwnd)
+    {
+        StatusText.Text := "Status: No Foxhole window found for " targetDescription "."
+        ShowHotkeyTooltip("No Foxhole window found for " targetDescription ".")
+        return
+    }
+
+    try WinRestore("ahk_id " targetInst.hwnd)
+    try WinActivate("ahk_id " targetInst.hwnd)
+    try WinWaitActive("ahk_id " targetInst.hwnd, , 1)
+    StatusText.Text := "Status: Activated " targetDescription "."
 }
 
 MakeSharedHotkeyHandler(keyName)
@@ -7578,13 +7931,18 @@ GetActiveFoxholeInstanceIndex()
 
 DisableAllHotkeys()
 {
-    global ActionNames, CurrentKeys
+    global ActionNames, CurrentKeys, AccountSwapKeys
 
     disabled := Map()
 
+    allKeys := []
     for action in ActionNames
+        allKeys.Push(CurrentKeys[action])
+    for _, key in AccountSwapKeys
+        allKeys.Push(key)
+
+    for key in allKeys
     {
-        key := CurrentKeys[action]
         if key = ""
             continue
 
@@ -7600,13 +7958,18 @@ DisableAllHotkeys()
 
 EnableAllHotkeys()
 {
-    global ActionNames, CurrentKeys
+    global ActionNames, CurrentKeys, AccountSwapKeys
 
     registered := Map()
 
+    allKeys := []
     for action in ActionNames
+        allKeys.Push(CurrentKeys[action])
+    for _, key in AccountSwapKeys
+        allKeys.Push(key)
+
+    for key in allKeys
     {
-        key := CurrentKeys[action]
         if key = ""
             continue
 
@@ -7634,6 +7997,107 @@ MakeHotkeysRebindHandler(action)
         StartRebind(action, ctrlObj)
     }
     return handler
+}
+
+MakeAccountSwapRebindHandler(accountIndex)
+{
+    return (ctrl, *) => StartAccountSwapRebind(accountIndex, ctrl)
+}
+
+MakeAccountSwapActionHandler(callback, accountIndex)
+{
+    return (*) => callback(accountIndex)
+}
+
+StartAccountSwapRebind(accountIndex, btn)
+{
+    global RebindingAction, PollKeyList, StatusText
+    if RebindingAction != ""
+        return
+    if PollKeyList.Length = 0
+        InitPollKeyList()
+    DisableAllHotkeys()
+    RebindingAction := "AccountSwap:" accountIndex
+    btn.Text := "Press any key..."
+    StatusText.Text := "Status: Listening for Swap to " accountIndex " (Esc to cancel)..."
+    SetTimer(PollForAccountSwapRebind, 20)
+
+    PollForAccountSwapRebind()
+    {
+        global RebindingAction, PollKeyList
+        if !InStr(RebindingAction, "AccountSwap:")
+        {
+            SetTimer(PollForAccountSwapRebind, 0)
+            return
+        }
+        for keyName in PollKeyList
+        {
+            if IsModifierKeyName(keyName)
+                continue
+            if GetKeyState(keyName, "P")
+            {
+                SetTimer(PollForAccountSwapRebind, 0)
+                modPrefix := BuildHeldModifierPrefix()
+                BeginRebindReleaseWatch(keyName)
+                FinishAccountSwapRebind(accountIndex, btn, modPrefix, keyName)
+                return
+            }
+        }
+    }
+}
+
+FinishAccountSwapRebind(accountIndex, btn, modPrefix, keyName)
+{
+    global RebindingAction, AccountSwapKeys, AccountSwapButtons, CurrentKeys, ActionNames, RebindButtons, DefaultKeys, StatusText
+    RebindingAction := ""
+    if keyName = "Escape" && modPrefix = ""
+    {
+        btn.Text := "Swap to " accountIndex " | " DisplayNameForHotkeyString(AccountSwapKeys[accountIndex])
+        StatusText.Text := "Status: Rebind cancelled."
+        return
+    }
+
+    fullKey := modPrefix . keyName
+    for action in ActionNames
+    {
+        if CurrentKeys[action] != "" && StrLower(CurrentKeys[action]) = StrLower(fullKey)
+        {
+            CurrentKeys[action] := DefaultKeys[action]
+            if RebindButtons.Has(action)
+                RebindButtons[action].Text := ActionButtonText(action, CurrentKeys[action])
+        }
+    }
+    for otherIndex, otherKey in AccountSwapKeys
+    {
+        if otherIndex != accountIndex && otherKey != "" && StrLower(otherKey) = StrLower(fullKey)
+        {
+            AccountSwapKeys[otherIndex] := ""
+            if AccountSwapButtons.Has(otherIndex)
+                AccountSwapButtons[otherIndex].Text := "Swap to " otherIndex " | Unbound"
+        }
+    }
+
+    AccountSwapKeys[accountIndex] := fullKey
+    btn.Text := "Swap to " accountIndex " | " DisplayNameForHotkeyString(fullKey)
+    SaveConfig()
+    StatusText.Text := "Status: Swap to " accountIndex " = " DisplayNameForHotkeyString(fullKey)
+}
+
+ResetAccountSwapHotkey(accountIndex)
+{
+    UnbindAccountSwapHotkey(accountIndex)
+}
+
+UnbindAccountSwapHotkey(accountIndex)
+{
+    global AccountSwapKeys, AccountSwapButtons, StatusText
+    DisableAllHotkeys()
+    AccountSwapKeys[accountIndex] := ""
+    if AccountSwapButtons.Has(accountIndex)
+        AccountSwapButtons[accountIndex].Text := "Swap to " accountIndex " | Unbound"
+    SaveConfig()
+    EnableAllHotkeys()
+    StatusText.Text := "Status: Swap to " accountIndex " is unbound."
 }
 
 MakeOutputKeyHandler(action)
@@ -7838,6 +8302,7 @@ BuildHeldModifierPrefix()
 FinishRebind(action, btn, modPrefix, keyName)
 {
     global RebindingAction, CurrentKeys, ActionNames, ActionLabels, RebindButtons
+    global AccountSwapKeys, AccountSwapButtons
 
     RebindingAction := ""
 
@@ -7865,9 +8330,19 @@ FinishRebind(action, btn, modPrefix, keyName)
         }
     }
 
+    for accountIndex, accountKey in AccountSwapKeys
+    {
+        if accountKey != "" && StrLower(accountKey) = StrLower(fullKey)
+        {
+            AccountSwapKeys[accountIndex] := ""
+            if AccountSwapButtons.Has(accountIndex)
+                AccountSwapButtons[accountIndex].Text := "Swap to " accountIndex " | Unbound"
+        }
+    }
+
     CurrentKeys[action] := fullKey
 
-    SaveHotkeysConfig()
+    SaveConfig()
 
     btn.Text := ActionButtonText(action, fullKey)
     StatusText.Text := "Status: " ActionLabels[action] " = " DisplayNameForHotkeyString(fullKey)
@@ -8099,7 +8574,8 @@ SwitchMainPage(page, *)
 {
     global MainGui, MainPageControls, SBGui, HotkeysGui, LayoutEditorGui, CurrentMainPage
     global MainNavButtons, LayoutEditorEditingActive, LayoutWindowPositions, LayoutReapplyPending
-    global LayoutEditorRequiredHeight
+    global LayoutEditorRequiredHeight, WorkflowEditorExpanded, WorkflowEditorControls
+    global SettingsSectionExpanded, SettingsSectionControls
 
     if !IsObject(MainGui)
         return
@@ -8107,6 +8583,16 @@ SwitchMainPage(page, *)
     SetGuiRedraw(MainGui, false)
     for ctrl in MainPageControls
         try ctrl.Visible := page = "Main"
+    if page = "Main" && !WorkflowEditorExpanded
+    {
+        for ctrl in WorkflowEditorControls
+            try ctrl.Visible := false
+    }
+    if page = "Main" && !SettingsSectionExpanded
+    {
+        for ctrl in SettingsSectionControls
+            try ctrl.Visible := false
+    }
     for name, btn in MainNavButtons
         try btn.Enabled := name != page
 
@@ -8173,6 +8659,8 @@ GetMainPageRequiredHeight()
             continue
         try
         {
+            if !ctrl.Visible
+                continue
             ctrl.GetPos(&x, &y, &w, &h)
             bottom := Max(bottom, y + h)
         }
@@ -8861,7 +9349,7 @@ LoadConfig()
 {
     global CONFIG_FILE, ActionNames, DefaultKeys, CurrentKeys, Settings
     global OutputActionNames, DefaultOutputKeys, CurrentOutputKeys
-    global SandboxieRowCount, SandboxieAccounts, MaxSandboxieRows, Layouts
+    global SandboxieRowCount, SandboxieAccounts, MaxSandboxieRows, Layouts, AccountSwapKeys
     global LayoutEditorSelectedLayout, LayoutFavorites
 
     missingHotkey := "__HOTKEY_SETTING_MISSING__"
@@ -8904,6 +9392,7 @@ LoadConfig()
     Settings["MouseFocusOn"] := IniRead(CONFIG_FILE, "Settings", "MouseFocusOn", "1") = "1"
     Settings["AutoResetSlots"] := IniRead(CONFIG_FILE, "Settings", "AutoResetSlots", "0") = "1"
     Settings["ChangeOutputKeys"] := IniRead(CONFIG_FILE, "Settings", "ChangeOutputKeys", "0") = "1"
+    Settings["SwapByAccount"] := IniRead(CONFIG_FILE, "Settings", "SwapByAccount", "1") = "1"
     Settings["HotkeysAlwaysOnTop"] := IniRead(CONFIG_FILE, "Settings", "HotkeysAlwaysOnTop", "0") = "1"
     Settings["SandboxieAlwaysOnTop"] := IniRead(CONFIG_FILE, "Settings", "SandboxieAlwaysOnTop", "0") = "1"
     Settings["LayoutEditorAlwaysOnTop"] := IniRead(CONFIG_FILE, "Settings", "LayoutEditorAlwaysOnTop", "0") = "1"
@@ -9035,6 +9524,10 @@ LoadConfig()
             mainAlreadyLoaded := true
         SandboxieAccounts.Push({ name: accountName, selected: selected, main: isMain, steamUsername: steamUsername })
     }
+
+    AccountSwapKeys := Map()
+    for index, account in SandboxieAccounts
+        AccountSwapKeys[index] := IniRead(CONFIG_FILE, "AccountSwapHotkeys", "Slot" index, "")
 }
 
 SaveLayoutsConfig()
@@ -9087,7 +9580,7 @@ SaveConfig()
 {
     global CONFIG_FILE, ActionNames, CurrentKeys, Settings
     global OutputActionNames, CurrentOutputKeys
-    global SandboxieRowCount, SandboxieAccounts, MaxSandboxieRows, Layouts
+    global SandboxieRowCount, SandboxieAccounts, MaxSandboxieRows, Layouts, AccountSwapKeys
     for action in ActionNames
         IniWrite(CurrentKeys[action], CONFIG_FILE, "Hotkeys", action)
     for action in OutputActionNames
@@ -9106,6 +9599,7 @@ SaveConfig()
     IniWrite(Settings["MouseFocusOn"] ? "1" : "0", CONFIG_FILE, "Settings", "MouseFocusOn")
     IniWrite(Settings["AutoResetSlots"] ? "1" : "0", CONFIG_FILE, "Settings", "AutoResetSlots")
     IniWrite(Settings["ChangeOutputKeys"] ? "1" : "0", CONFIG_FILE, "Settings", "ChangeOutputKeys")
+    IniWrite(Settings["SwapByAccount"] ? "1" : "0", CONFIG_FILE, "Settings", "SwapByAccount")
     IniWrite(Settings["HotkeysAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "HotkeysAlwaysOnTop")
     IniWrite(Settings["SandboxieAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "SandboxieAlwaysOnTop")
     IniWrite(Settings["LayoutEditorAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "LayoutEditorAlwaysOnTop")
@@ -9114,6 +9608,11 @@ SaveConfig()
     IniWrite(Settings["SandboxieSandManExe"], CONFIG_FILE, "SandboxiePaths", "SandManExe")
     IniWrite(Settings["SandboxieSteamExe"], CONFIG_FILE, "SandboxiePaths", "SteamExe")
     IniWrite(Settings["SandboxieFoxholeExe"], CONFIG_FILE, "SandboxiePaths", "FoxholeExe")
+
+    IniDelete(CONFIG_FILE, "AccountSwapHotkeys")
+    for accountIndex, key in AccountSwapKeys
+        if key != ""
+            IniWrite(key, CONFIG_FILE, "AccountSwapHotkeys", "Slot" accountIndex)
 
     SaveLayoutsConfig()
     SaveWorkflowPresetsConfig()
