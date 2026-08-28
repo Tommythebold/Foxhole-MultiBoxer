@@ -7922,7 +7922,7 @@ GetActiveFoxholeInstanceIndex()
 {
     global Instances
 
-    hwnd := WinGetID("A")
+    hwnd := WinExist("A")
     if !hwnd
         return 0
 
