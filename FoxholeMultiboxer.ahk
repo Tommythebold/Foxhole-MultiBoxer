@@ -210,6 +210,13 @@ global LayoutEditorRequiredHeight := 600
 global LayoutEditorExpandedSlots := Map()
 global LayoutEditorCombo := ""
 global LayoutEditorFavoriteSlotCombo := ""
+global LayoutEditorNoOverlapCheck := ""
+global LayoutEditorSplitMonitorCombo := ""
+global LayoutEditorSplitSlotsButton := ""
+global LayoutEditorSplitCountCombo := ""
+global LayoutEditorSplitSelectedSlots := []
+global LayoutEditorSplitPickerGui := ""
+global LayoutEditorSplitPickerChecks := []
 global LayoutEditorSelectedLayout := 0
 global LayoutEditorOverlays := Map()
 global LayoutEditorAlwaysOnTopCheck := ""
@@ -1544,7 +1551,8 @@ StopLayoutPositionWatcher()
 
 BuildLayoutEditorGui()
 {
-    global LayoutEditorGui, LayoutEditorCombo, LayoutEditorFavoriteSlotCombo, MainGui
+    global LayoutEditorGui, LayoutEditorCombo, LayoutEditorFavoriteSlotCombo, LayoutEditorNoOverlapCheck, MainGui
+    global LayoutEditorSplitMonitorCombo, LayoutEditorSplitSlotsButton, LayoutEditorSplitCountCombo
 
     LayoutEditorGui := Gui("+Parent" MainGui.Hwnd " -Caption -Border", "Layout Editor")
     LayoutEditorGui.SetFont("s9", "Segoe UI")
@@ -1565,12 +1573,34 @@ BuildLayoutEditorGui()
     addSlotBtn := RegisterTooltip(LayoutEditorGui.AddButton("x347 y38 w85 h25", "+ Add Slot"), (*) => LayoutManagerTooltip("Add"))
     addSlotBtn.OnEvent("Click", AddLayoutSlot)
 
-    allPreviewBtn := RegisterTooltip(LayoutEditorGui.AddButton("x68 y66 w80 h25", "Show/Hide"), (*) => LayoutManagerTooltip("Preview"))
+    allPreviewBtn := RegisterTooltip(LayoutEditorGui.AddButton("x68 y66 w80 h25", "Preview"), (*) => LayoutManagerTooltip("Preview"))
     allPreviewBtn.OnEvent("Click", ToggleAllLayoutPreviews)
     LayoutEditorGui.AddText("x156 y70 w55 h20 +Right", "Favorite:")
     LayoutEditorFavoriteSlotCombo := LayoutEditorGui.AddDropDownList("x216 y66 w128 r5", ["Not Favorite", "Favorite 1", "Favorite 2", "Favorite 3", "Favorite 4"])
     LayoutEditorFavoriteSlotCombo.OnEvent("Change", LayoutFavoriteSlotChanged)
     RegisterTooltip(LayoutEditorFavoriteSlotCombo, "Assign the selected saved layout to one of the four favorite buttons on the Main page.")
+    LayoutEditorNoOverlapCheck := LayoutEditorGui.AddCheckBox("x352 y66 w100 h25", "No Overlap?")
+    LayoutEditorNoOverlapCheck.Value := 0
+    RegisterTooltip(LayoutEditorNoOverlapCheck, "When enabled, X and Y moves stop at the nearest slot on the same monitor instead of overlapping or passing through it.")
+
+    LayoutEditorGui.AddText("x12 y100 w48 h24 +0x200", "Split:")
+    LayoutEditorSplitMonitorCombo := LayoutEditorGui.AddDropDownList("x61 y98 w105 r5", GetMonitorDisplayNames())
+    LayoutEditorSplitMonitorCombo.Value := MonitorGetPrimary()
+    RegisterTooltip(LayoutEditorSplitMonitorCombo, "Monitor to fill with evenly sized horizontal slot columns.")
+    LayoutEditorGui.AddText("x173 y100 w36 h24 +0x200", "Slots:")
+    LayoutEditorSplitSlotsButton := LayoutEditorGui.AddButton("x210 y98 w105 h24", "Choose Slots")
+    LayoutEditorSplitSlotsButton.OnEvent("Click", ShowLayoutSplitSlotPicker)
+    RegisterTooltip(LayoutEditorSplitSlotsButton, "Choose layout slots with checkboxes. No typing is required.")
+    LayoutEditorGui.AddText("x322 y100 w38 h24 +0x200", "Count:")
+    splitCounts := []
+    Loop 32
+        splitCounts.Push(String(A_Index))
+    LayoutEditorSplitCountCombo := LayoutEditorGui.AddDropDownList("x361 y98 w65 r10", splitCounts)
+    LayoutEditorSplitCountCombo.Value := 4
+    RegisterTooltip(LayoutEditorSplitCountCombo, "How many of the selected slots to split evenly across the monitor.")
+    splitApplyBtn := LayoutEditorGui.AddButton("x433 y98 w104 h24", "Apply Split")
+    splitApplyBtn.OnEvent("Click", ApplyLayoutMonitorSplit)
+    RegisterTooltip(splitApplyBtn, "Arrange the first selected slots in a balanced playable grid across the chosen monitor.")
 
     LayoutEditorGui.OnEvent("Close", CloseLayoutEditor)
     LayoutEditorGui.OnEvent("Escape", CloseLayoutEditor)
@@ -1868,7 +1898,7 @@ BuildCurrentLayoutEditorRows()
     global LayoutEditorGui, LayoutEditorSlots, LayoutEditorValueCtrls
     global LayoutEditorSlotControls, LayoutEditorExpandedSlots, LayoutEditorRequiredHeight
 
-    y := 100
+    y := 132
     for slotIndex, slot in LayoutEditorSlots
     {
         expanded := LayoutEditorExpandedSlots.Has(slot.slot) ? LayoutEditorExpandedSlots[slot.slot] : false
@@ -1883,21 +1913,21 @@ BuildCurrentLayoutEditorRows()
         aspectCheck := LayoutEditorGui.AddCheckBox("x269 y" y " w92 h24", "Keep Ratio")
         aspectCheck.Value := HasProp(slot, "keepAspect") && slot.keepAspect ? 1 : 0
         aspectCheck.OnEvent("Click", MakeLayoutAspectHandler(slotIndex))
-        showBtn := LayoutEditorGui.AddButton("x363 y" y " w62 h24", "Preview")
+        fitRestBtn := LayoutEditorGui.AddButton("x363 y" y " w62 h24", "Fit Rest")
         removeBtn := LayoutEditorGui.AddButton("x428 y" y " w58 h24", "Remove")
         matchBtn := LayoutEditorGui.AddButton("x489 y" y " w48 h24", "Match")
-        showBtn.OnEvent("Click", MakeLayoutShowHandler(slotIndex))
+        fitRestBtn.OnEvent("Click", MakeLayoutFitRestHandler(slotIndex))
         removeBtn.OnEvent("Click", MakeLayoutRemoveHandler(slotIndex))
         matchBtn.OnEvent("Click", MakeLayoutMatchBelowHandler(slotIndex))
 
         RegisterLayoutEditorTooltip(toggleBtn, LayoutSlotTooltip.Bind(slotIndex, "Header"))
         RegisterLayoutEditorTooltip(monitorCombo, LayoutSlotTooltip.Bind(slotIndex, "Monitor"))
         RegisterLayoutEditorTooltip(aspectCheck, "Keep this slot's current width-to-height ratio while resizing either dimension.")
-        RegisterLayoutEditorTooltip(showBtn, LayoutSlotTooltip.Bind(slotIndex, "Show"))
+        RegisterLayoutEditorTooltip(fitRestBtn, "Keep Slot " slot.slot " fixed and fit every other slot assigned to this monitor into equal playable windows around it without overlap.")
         RegisterLayoutEditorTooltip(removeBtn, LayoutSlotTooltip.Bind(slotIndex, "Remove"))
         RegisterLayoutEditorTooltip(matchBtn, LayoutSlotTooltip.Bind(slotIndex, "Match"))
 
-        controls := [toggleBtn, monitorLabel, monitorCombo, aspectCheck, showBtn, removeBtn, matchBtn]
+        controls := [toggleBtn, monitorLabel, monitorCombo, aspectCheck, fitRestBtn, removeBtn, matchBtn]
         values := Map()
         y += 28
 
@@ -1918,6 +1948,247 @@ BuildCurrentLayoutEditorRows()
 
     LayoutEditorRequiredHeight := Max(140, y + 42)
     LayoutEditorGui.Move(, , 559, LayoutEditorRequiredHeight)
+}
+
+ShowLayoutSplitSlotPicker(*)
+{
+    global LayoutEditorGui, LayoutEditorSlots, LayoutEditorSplitSelectedSlots
+    global LayoutEditorSplitPickerGui, LayoutEditorSplitPickerChecks
+
+    try LayoutEditorSplitPickerGui.Destroy()
+
+    LayoutEditorSplitPickerGui := Gui("+Owner" LayoutEditorGui.Hwnd " +AlwaysOnTop", "Choose Split Slots")
+    LayoutEditorSplitPickerGui.SetFont("s9", "Segoe UI")
+    LayoutEditorSplitPickerGui.MarginX := 14
+    LayoutEditorSplitPickerGui.MarginY := 12
+    LayoutEditorSplitPickerGui.AddText("xm ym w310", "Choose slots in the order shown. The split count uses the first selected slots.")
+
+    selected := Map()
+    for _, slotNumber in LayoutEditorSplitSelectedSlots
+        selected[slotNumber] := true
+
+    LayoutEditorSplitPickerChecks := []
+    columns := 4
+    boxWidth := 76
+    startY := 42
+    for index, slot in LayoutEditorSlots
+    {
+        column := Mod(index - 1, columns)
+        row := Floor((index - 1) / columns)
+        check := LayoutEditorSplitPickerGui.AddCheckBox("x" (14 + column * boxWidth) " y" (startY + row * 28) " w70 h22", "Slot " slot.slot)
+        check.Value := selected.Has(slot.slot) ? 1 : 0
+        LayoutEditorSplitPickerChecks.Push({ctrl: check, slot: slot.slot})
+    }
+
+    rows := Max(1, Ceil(LayoutEditorSlots.Length / columns))
+    buttonY := startY + rows * 28 + 8
+    allBtn := LayoutEditorSplitPickerGui.AddButton("x14 y" buttonY " w72 h25", "Select All")
+    noneBtn := LayoutEditorSplitPickerGui.AddButton("x91 y" buttonY " w72 h25", "Clear")
+    applyBtn := LayoutEditorSplitPickerGui.AddButton("x183 y" buttonY " w66 h25 Default", "Apply")
+    cancelBtn := LayoutEditorSplitPickerGui.AddButton("x254 y" buttonY " w66 h25", "Cancel")
+    allBtn.OnEvent("Click", SetAllLayoutSplitPickerChecks.Bind(true))
+    noneBtn.OnEvent("Click", SetAllLayoutSplitPickerChecks.Bind(false))
+    applyBtn.OnEvent("Click", SaveLayoutSplitSlotPicker)
+    cancelBtn.OnEvent("Click", CloseLayoutSplitSlotPicker)
+    LayoutEditorSplitPickerGui.OnEvent("Close", CloseLayoutSplitSlotPicker)
+    LayoutEditorSplitPickerGui.OnEvent("Escape", CloseLayoutSplitSlotPicker)
+    LayoutEditorSplitPickerGui.Show("AutoSize Center")
+}
+
+SetAllLayoutSplitPickerChecks(value, *)
+{
+    global LayoutEditorSplitPickerChecks
+    for item in LayoutEditorSplitPickerChecks
+        item.ctrl.Value := value ? 1 : 0
+}
+
+SaveLayoutSplitSlotPicker(*)
+{
+    global LayoutEditorSplitSelectedSlots, LayoutEditorSplitPickerChecks
+    LayoutEditorSplitSelectedSlots := []
+    for item in LayoutEditorSplitPickerChecks
+        if item.ctrl.Value
+            LayoutEditorSplitSelectedSlots.Push(item.slot)
+    UpdateLayoutSplitSlotsButton()
+    CloseLayoutSplitSlotPicker()
+}
+
+CloseLayoutSplitSlotPicker(*)
+{
+    global LayoutEditorSplitPickerGui, LayoutEditorSplitPickerChecks
+    try LayoutEditorSplitPickerGui.Destroy()
+    LayoutEditorSplitPickerGui := ""
+    LayoutEditorSplitPickerChecks := []
+}
+
+UpdateLayoutSplitSlotsButton()
+{
+    global LayoutEditorSplitSlotsButton, LayoutEditorSplitSelectedSlots
+    if !IsObject(LayoutEditorSplitSlotsButton)
+        return
+    count := LayoutEditorSplitSelectedSlots.Length
+    LayoutEditorSplitSlotsButton.Text := count ? count " Selected" : "Choose Slots"
+}
+
+ApplyLayoutMonitorSplit(*)
+{
+    global LayoutEditorSlots, LayoutEditorSplitMonitorCombo, LayoutEditorSplitSlotsButton, LayoutEditorSplitCountCombo
+    global LayoutEditorSplitSelectedSlots, LayoutEditorOverlays
+
+    if !IsObject(LayoutEditorSplitMonitorCombo) || !IsObject(LayoutEditorSplitSlotsButton) || !IsObject(LayoutEditorSplitCountCombo)
+        return
+
+    monitorNumber := LayoutEditorSplitMonitorCombo.Value
+    splitCount := LayoutEditorSplitCountCombo.Value
+    if monitorNumber < 1 || monitorNumber > MonitorGetCount() || splitCount < 1
+        return
+
+    if LayoutEditorSplitSelectedSlots.Length = 0
+    {
+        MsgBox("Choose at least one slot first.", "Layout Editor", "Icon!")
+        return
+    }
+
+    selectedIndexes := []
+    for _, requestedSlot in LayoutEditorSplitSelectedSlots
+    {
+        for index, slot in LayoutEditorSlots
+        {
+            if slot.slot = requestedSlot
+            {
+                selectedIndexes.Push(index)
+                break
+            }
+        }
+        if selectedIndexes.Length >= splitCount
+            break
+    }
+
+    if selectedIndexes.Length < splitCount
+    {
+        MsgBox("Only " selectedIndexes.Length " selected slots exist in this layout. Select more slots or lower the split count.", "Layout Editor", "Icon!")
+        return
+    }
+
+    MonitorGet(monitorNumber, &left, &top, &right, &bottom)
+    monitorWidth := Max(1, right - left)
+    monitorHeight := Max(1, bottom - top)
+    grid := ChoosePlayableLayoutGrid(splitCount, monitorWidth, monitorHeight)
+    rows := grid.rows
+    columns := grid.columns
+
+    position := 1
+    baseRowHeight := Floor(monitorHeight / rows)
+    rowRemainder := Mod(monitorHeight, rows)
+    nextY := 0
+
+    Loop rows
+    {
+        row := A_Index
+        remaining := splitCount - position + 1
+        rowsLeft := rows - row + 1
+        slotsInRow := Min(columns, Ceil(remaining / rowsLeft))
+        rowHeight := baseRowHeight + (row <= rowRemainder ? 1 : 0)
+        baseWidth := Floor(monitorWidth / slotsInRow)
+        widthRemainder := Mod(monitorWidth, slotsInRow)
+        nextX := 0
+
+        Loop slotsInRow
+        {
+            slotIndex := selectedIndexes[position]
+            slot := LayoutEditorSlots[slotIndex]
+            width := baseWidth + (A_Index <= widthRemainder ? 1 : 0)
+            slot.monitor := monitorNumber
+            slot.monitorWidth := monitorWidth
+            slot.monitorHeight := monitorHeight
+            slot.x := nextX
+            slot.y := nextY
+            slot.width := Max(1, width)
+            slot.height := Max(1, rowHeight)
+            slot.keepAspect := false
+            slot.aspectRatio := slot.width / slot.height
+            nextX += width
+            position++
+            ApplyLayoutSlotToWindow(slot)
+            if LayoutEditorOverlays.Has(slot.slot)
+                UpdateLayoutPreview(slotIndex)
+        }
+        nextY += rowHeight
+    }
+
+    RefreshLayoutEditorRowsOnly()
+}
+
+ChoosePlayableLayoutGrid(slotCount, monitorWidth, monitorHeight)
+{
+    monitorRatio := monitorWidth / Max(1, monitorHeight)
+    bestRows := 1
+    bestColumns := slotCount
+    bestScore := 1000000
+    targetRatio := 1.55
+
+    Loop slotCount
+    {
+        rows := A_Index
+        columns := Ceil(slotCount / rows)
+        cellRatio := monitorRatio * rows / columns
+        emptyCells := rows * columns - slotCount
+        score := Abs(Log(cellRatio / targetRatio)) + emptyCells * 0.12
+        if cellRatio < 1.05
+            score += (1.05 - cellRatio) * 2.5
+        if score < bestScore
+        {
+            bestScore := score
+            bestRows := rows
+            bestColumns := columns
+        }
+    }
+    return {rows: bestRows, columns: bestColumns}
+}
+
+ParseLayoutSlotSelection(text)
+{
+    result := []
+    seen := Map()
+    normalized := StrReplace(StrReplace(Trim(text), ";", ","), " ", "")
+
+    for _, token in StrSplit(normalized, ",")
+    {
+        token := Trim(token)
+        if token = ""
+            continue
+
+        if RegExMatch(token, "^(\d+)\s*-\s*(\d+)$", &match)
+        {
+            startSlot := Integer(match[1])
+            endSlot := Integer(match[2])
+            step := startSlot <= endSlot ? 1 : -1
+            current := startSlot
+            Loop
+            {
+                if current >= 1 && !seen.Has(current)
+                {
+                    result.Push(current)
+                    seen[current] := true
+                }
+                if current = endSlot
+                    break
+                current += step
+            }
+        }
+        else if RegExMatch(token, "^\d+$")
+        {
+            slotNumber := Integer(token)
+            if slotNumber >= 1 && !seen.Has(slotNumber)
+            {
+                result.Push(slotNumber)
+                seen[slotNumber] := true
+            }
+        }
+        else
+            return []
+    }
+    return result
 }
 
 MakeLayoutExpandHandler(index)
@@ -2025,7 +2296,10 @@ SetLayoutSlotValue(index, prop, value)
 
     slot := LayoutEditorSlots[index]
     if prop = "x" || prop = "y"
-        slot.%prop% := ClampLayoutCoordinate(slot, prop, value)
+    {
+        value := ClampLayoutCoordinate(slot, prop, value)
+        slot.%prop% := ResolveLayoutNoOverlapMove(index, prop, value)
+    }
     else
     {
         slot.%prop% := ClampLayoutSize(slot, prop, value)
@@ -2058,6 +2332,78 @@ AdjustLayoutSlot(index, prop, delta)
     if index < 1 || index > LayoutEditorSlots.Length
         return
     SetLayoutSlotValue(index, prop, LayoutEditorSlots[index].%prop% + delta)
+}
+
+
+ResolveLayoutNoOverlapMove(index, prop, desiredValue)
+{
+    global LayoutEditorSlots, LayoutEditorNoOverlapCheck
+
+    if !IsObject(LayoutEditorNoOverlapCheck) || LayoutEditorNoOverlapCheck.Value != 1
+        return desiredValue
+    if index < 1 || index > LayoutEditorSlots.Length
+        return desiredValue
+
+    moving := LayoutEditorSlots[index]
+    currentValue := moving.%prop%
+    if desiredValue = currentValue
+        return desiredValue
+
+    movingMonitor := ResolveLayoutMonitorNumber(moving)
+    if prop = "x"
+    {
+        movingCrossStart := moving.y
+        movingCrossEnd := moving.y + moving.height
+        movingSize := moving.width
+    }
+    else
+    {
+        movingCrossStart := moving.x
+        movingCrossEnd := moving.x + moving.width
+        movingSize := moving.height
+    }
+
+    resolved := desiredValue
+    movingNegative := desiredValue < currentValue
+
+    for otherIndex, other in LayoutEditorSlots
+    {
+        if otherIndex = index || ResolveLayoutMonitorNumber(other) != movingMonitor
+            continue
+
+        if prop = "x"
+        {
+            otherCrossStart := other.y
+            otherCrossEnd := other.y + other.height
+            otherStart := other.x
+            otherEnd := other.x + other.width
+        }
+        else
+        {
+            otherCrossStart := other.x
+            otherCrossEnd := other.x + other.width
+            otherStart := other.y
+            otherEnd := other.y + other.height
+        }
+
+        if movingCrossStart >= otherCrossEnd || movingCrossEnd <= otherCrossStart
+            continue
+
+        if movingNegative
+        {
+            if otherEnd <= currentValue && desiredValue < otherEnd
+                resolved := Max(resolved, otherEnd)
+        }
+        else
+        {
+            currentEnd := currentValue + movingSize
+            boundary := otherStart - movingSize
+            if otherStart >= currentEnd && desiredValue > boundary
+                resolved := Min(resolved, boundary)
+        }
+    }
+
+    return resolved
 }
 
 ClampLayoutCoordinate(slot, prop, value)
@@ -2370,11 +2716,7 @@ ToggleAllLayoutPreviews(*)
     }
     else
     {
-        for index, slot in LayoutEditorSlots
-        {
-            if !LayoutEditorOverlays.Has(slot.slot)
-                ShowLayoutPreview(index)
-        }
+        ShowAllLayoutPreviews()
     }
 }
 
@@ -2397,7 +2739,7 @@ ShowLayoutPreview(index)
         return
     }
 
-    overlay := Gui("-AlwaysOnTop -Caption +ToolWindow", "Slot " slot.slot " Preview")
+    overlay := Gui("-Caption +ToolWindow", "Slot " slot.slot " Preview")
     overlay.BackColor := "00AEEF"
     overlay.SetFont("s16 bold", "Segoe UI")
     text := overlay.AddText("x0 y0 w" slot.width " h" slot.height " Center +0x200 +Border", "SLOT " slot.slot)
@@ -2409,20 +2751,13 @@ ShowLayoutPreview(index)
 
     try DllCall("SetLayeredWindowAttributes", "Ptr", overlay.Hwnd, "UInt", 0, "UChar", 40, "UInt", 0x2)
 
-    HWND_NOTOPMOST := -2
     HWND_BOTTOM := 1
-    SWP_NOSIZE := 0x0001
-    SWP_NOMOVE := 0x0002
     SWP_NOACTIVATE := 0x0010
     SWP_SHOWWINDOW := 0x0040
     rect := GetLayoutSlotAbsoluteRect(slot)
-    try DllCall("SetWindowPos", "Ptr", overlay.Hwnd, "Ptr", HWND_NOTOPMOST,
+    try DllCall("SetWindowPos", "Ptr", overlay.Hwnd, "Ptr", HWND_BOTTOM,
         "Int", rect.x, "Int", rect.y, "Int", rect.width, "Int", rect.height,
         "UInt", SWP_NOACTIVATE | SWP_SHOWWINDOW)
-
-    try DllCall("SetWindowPos", "Ptr", overlay.Hwnd, "Ptr", HWND_BOTTOM,
-        "Int", 0, "Int", 0, "Int", 0, "Int", 0,
-        "UInt", SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
 
     LayoutEditorOverlays[slot.slot] := {gui: overlay, text: text}
 }
@@ -2445,12 +2780,9 @@ UpdateLayoutPreview(index)
         try WinSetExStyle(0x00080000 | 0x00000020 | 0x08000000 | 0x00000080, "ahk_id " preview.gui.Hwnd)
         try DllCall("SetLayeredWindowAttributes", "Ptr", preview.gui.Hwnd, "UInt", 0, "UChar", 40, "UInt", 0x2)
         rect := GetLayoutSlotAbsoluteRect(slot)
-        try DllCall("SetWindowPos", "Ptr", preview.gui.Hwnd, "Ptr", -2,
+        try DllCall("SetWindowPos", "Ptr", preview.gui.Hwnd, "Ptr", 1,
             "Int", rect.x, "Int", rect.y, "Int", rect.width, "Int", rect.height,
             "UInt", 0x0010 | 0x0040)
-        try DllCall("SetWindowPos", "Ptr", preview.gui.Hwnd, "Ptr", 1,
-            "Int", 0, "Int", 0, "Int", 0, "Int", 0,
-            "UInt", 0x0001 | 0x0002 | 0x0010)
     }
     catch
     {
@@ -2495,6 +2827,200 @@ RefreshVisibleLayoutPreviews()
     }
 }
 
+MakeLayoutFitRestHandler(index)
+{
+    return (*) => FitRemainingLayoutSlots(index)
+}
+
+FitRemainingLayoutSlots(anchorIndex)
+{
+    global LayoutEditorSlots, LayoutEditorOverlays
+
+    if anchorIndex < 1 || anchorIndex > LayoutEditorSlots.Length
+        return
+
+    anchor := LayoutEditorSlots[anchorIndex]
+    monitorNumber := ResolveLayoutMonitorNumber(anchor)
+    targetIndexes := []
+    for index, slot in LayoutEditorSlots
+        if index != anchorIndex && ResolveLayoutMonitorNumber(slot) = monitorNumber
+            targetIndexes.Push(index)
+
+    if targetIndexes.Length = 0
+    {
+        MsgBox("There are no other layout slots assigned to Monitor " monitorNumber ".", "Fit Rest", "Icon!")
+        return
+    }
+
+    MonitorGet(monitorNumber, &monitorLeft, &monitorTop, &monitorRight, &monitorBottom)
+    try MonitorGetWorkArea(monitorNumber, &workLeft, &workTop, &workRight, &workBottom)
+    catch
+    {
+        workLeft := monitorLeft
+        workTop := monitorTop
+        workRight := monitorRight
+        workBottom := monitorBottom
+    }
+
+    anchorRect := GetLayoutSlotAbsoluteRect(anchor)
+    anchorLeft := Max(workLeft, anchorRect.x)
+    anchorTop := Max(workTop, anchorRect.y)
+    anchorRight := Min(workRight, anchorRect.x + anchorRect.width)
+    anchorBottom := Min(workBottom, anchorRect.y + anchorRect.height)
+
+    if anchorRight <= anchorLeft || anchorBottom <= anchorTop
+    {
+        MsgBox("The anchor slot does not overlap the usable work area of its assigned monitor.", "Fit Rest", "Icon!")
+        return
+    }
+
+    plan := FindBestFitRestPlan(workLeft, workTop, workRight, workBottom,
+        anchorLeft, anchorTop, anchorRight, anchorBottom, targetIndexes.Length)
+    if !IsObject(plan) || plan.Length < targetIndexes.Length
+    {
+        MsgBox("The remaining usable monitor space is too small to fit all other slots around this anchor.", "Fit Rest", "Icon!")
+        return
+    }
+
+    monitorWidth := Max(1, monitorRight - monitorLeft)
+    monitorHeight := Max(1, monitorBottom - monitorTop)
+    previewsWereVisible := LayoutEditorOverlays.Count > 0
+
+    for order, targetIndex in targetIndexes
+    {
+        rect := plan[order]
+        slot := LayoutEditorSlots[targetIndex]
+        slot.monitor := monitorNumber
+        slot.monitorWidth := monitorWidth
+        slot.monitorHeight := monitorHeight
+        slot.x := rect.x - monitorLeft
+        slot.y := rect.y - monitorTop
+        slot.width := rect.width
+        slot.height := rect.height
+        slot.keepAspect := false
+        slot.aspectRatio := slot.width / Max(1, slot.height)
+        ApplyLayoutSlotToWindow(slot, false)
+    }
+
+    RefreshList()
+    RefreshLayoutEditorRowsOnly()
+    if previewsWereVisible
+        ShowAllLayoutPreviews()
+}
+
+FindBestFitRestPlan(workLeft, workTop, workRight, workBottom, anchorLeft, anchorTop, anchorRight, anchorBottom, needed)
+{
+    modes := []
+    middleTop := Max(workTop, anchorTop)
+    middleBottom := Min(workBottom, anchorBottom)
+    middleHeight := Max(0, middleBottom - middleTop)
+    anchorBandLeft := Max(workLeft, anchorLeft)
+    anchorBandRight := Min(workRight, anchorRight)
+    anchorBandWidth := Max(0, anchorBandRight - anchorBandLeft)
+
+    modes.Push([
+        {x: workLeft, y: workTop, width: workRight - workLeft, height: Max(0, anchorTop - workTop)},
+        {x: workLeft, y: anchorBottom, width: workRight - workLeft, height: Max(0, workBottom - anchorBottom)},
+        {x: workLeft, y: middleTop, width: Max(0, anchorLeft - workLeft), height: middleHeight},
+        {x: anchorRight, y: middleTop, width: Max(0, workRight - anchorRight), height: middleHeight}
+    ])
+    modes.Push([
+        {x: workLeft, y: workTop, width: Max(0, anchorLeft - workLeft), height: workBottom - workTop},
+        {x: anchorRight, y: workTop, width: Max(0, workRight - anchorRight), height: workBottom - workTop},
+        {x: anchorBandLeft, y: workTop, width: anchorBandWidth, height: Max(0, anchorTop - workTop)},
+        {x: anchorBandLeft, y: anchorBottom, width: anchorBandWidth, height: Max(0, workBottom - anchorBottom)}
+    ])
+
+    bestPlan := []
+    bestScore := -1
+    for regions in modes
+    {
+        widths := Map()
+        heights := Map()
+        for region in regions
+        {
+            if region.width < 1 || region.height < 1
+                continue
+            Loop needed
+            {
+                candidateWidth := Floor(region.width / A_Index)
+                candidateHeight := Floor(region.height / A_Index)
+                if candidateWidth >= 80
+                    widths[candidateWidth] := true
+                if candidateHeight >= 60
+                    heights[candidateHeight] := true
+            }
+        }
+
+        for candidateWidth, _ in widths
+        {
+            for candidateHeight, _ in heights
+            {
+                placements := BuildFitRestPlacements(regions, candidateWidth, candidateHeight, needed)
+                if placements.Length < needed
+                    continue
+                ratio := candidateWidth / Max(1, candidateHeight)
+                ratioFactor := ratio < 1.10 ? Max(0.20, ratio / 1.10) : 1.0
+                if ratio > 2.60
+                    ratioFactor *= Max(0.55, 2.60 / ratio)
+                score := candidateWidth * candidateHeight * ratioFactor
+                if score > bestScore
+                {
+                    bestScore := score
+                    bestPlan := placements
+                }
+            }
+        }
+    }
+    return bestPlan
+}
+
+BuildFitRestPlacements(regions, cellWidth, cellHeight, needed)
+{
+    placements := []
+    for region in regions
+    {
+        columns := Floor(region.width / cellWidth)
+        rows := Floor(region.height / cellHeight)
+        if columns < 1 || rows < 1
+            continue
+
+        usedWidth := columns * cellWidth
+        usedHeight := rows * cellHeight
+        startX := region.x + Floor((region.width - usedWidth) / 2)
+        startY := region.y + Floor((region.height - usedHeight) / 2)
+        Loop rows
+        {
+            row := A_Index - 1
+            Loop columns
+            {
+                column := A_Index - 1
+                placements.Push({
+                    x: startX + column * cellWidth,
+                    y: startY + row * cellHeight,
+                    width: cellWidth,
+                    height: cellHeight
+                })
+                if placements.Length >= needed
+                    return placements
+            }
+        }
+    }
+    return placements
+}
+
+ShowAllLayoutPreviews()
+{
+    global LayoutEditorSlots, LayoutEditorOverlays
+    for index, slot in LayoutEditorSlots
+    {
+        if LayoutEditorOverlays.Has(slot.slot)
+            UpdateLayoutPreview(index)
+        else
+            ShowLayoutPreview(index)
+    }
+}
+
 MakeLayoutRemoveHandler(index)
 {
     return (*) => RemoveLayoutSlot(index)
@@ -2511,6 +3037,7 @@ MatchLayoutSlotsBelow(index)
     if index < 1 || index > LayoutEditorSlots.Length
         return
 
+    previewsWereVisible := LayoutEditorOverlays.Count > 0
     source := LayoutEditorSlots[index]
     targetIndex := index + 1
     while targetIndex <= LayoutEditorSlots.Length
@@ -2557,6 +3084,9 @@ MatchLayoutSlotsBelow(index)
 
         targetIndex++
     }
+
+    if previewsWereVisible
+        ShowAllLayoutPreviews()
 }
 
 CloneLayoutSlots(source)
