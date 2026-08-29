@@ -251,6 +251,8 @@ global WorkflowLaunchSteamCheck := ""
 global WorkflowResetSandboxesCheck := ""
 global WorkflowVerifySandboxesCheck := ""
 global WorkflowLaunchSteamMinimizedCheck := ""
+global WorkflowSequentialLoginCheck := ""
+global WorkflowSequentialCountCombo := ""
 global WorkflowIncludedAccountNames := []
 global WorkflowAccountPickerGui := ""
 global WorkflowAccountPickerChecks := []
@@ -270,6 +272,15 @@ global SettingsSectionExpanded := false
 global SettingsSectionHeader := ""
 global SettingsSectionControls := []
 global WorkflowPendingFoxholeAfterSteam := false
+global SequentialLoginActive := false
+global SequentialLoginAccounts := []
+global SequentialLoginMaxOnline := 1
+global SequentialLoginNextPosition := 1
+global SequentialLoginRefillPending := false
+global WorkflowStatusMessage := ""
+global StatusOverlayGui := ""
+global StatusOverlayText := ""
+global ShowStatusOverlayCheck := ""
 
 global Settings := Map(
     "ClickInterval", 50,
@@ -278,6 +289,7 @@ global Settings := Map(
     "DefaultClickY", 0,
     "MainAlwaysOnTop", false,
     "ShowOverlay", true,
+    "ShowStatusOverlay", true,
     "ShowHotkeyTooltips", true,
     "ShowUiTooltips", true,
     "MouseFocusOn", true,
@@ -315,6 +327,7 @@ OnMessage(0x84, LayoutPreviewHitTest, -1)
 SetTimer(InitialWindowDiscovery, -1500)
 SetTimer(RestoreMainGuiAfterStartup, -1900)
 SetTimer(MaintainTitleOverlays, 250)
+SetTimer(UpdateStatusOverlay, 200)
 
 SetTimer(MonitorSandboxieSupporterPopup, SandboxiePopupWatcherIntervalMs)
 SetTimer(MinimizeLaunchedSandboxieSteamWindows, 250)
@@ -967,10 +980,10 @@ BuildMainGui()
     global WorkflowFavoriteButtons, WorkflowPresetCombo, WorkflowFavoriteSlotCombo
     global LayoutFavoriteButtons
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
-    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowAccountSummary, WorkflowSequenceText
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowAccountSummary, WorkflowSequenceText
     global WorkflowRunButton, WorkflowStopButton
     global WorkflowEditorExpanded, WorkflowEditorHeader, WorkflowEditorControls, WorkflowBelowEditorControls, WorkflowEditorCollapseHeight
-    global SettingsSectionExpanded, SettingsSectionHeader, SettingsSectionControls
+    global SettingsSectionExpanded, SettingsSectionHeader, SettingsSectionControls, ShowStatusOverlayCheck
 
     MainGui := Gui("+Resize +0x02000000", APP_TITLE)
     MainGui.SetFont("s9", "Segoe UI")
@@ -1090,6 +1103,14 @@ BuildMainGui()
     MainGui.AddText("x12 y" y " w92 h24", "Foxhole")
     WorkflowResetFoxholeCheck := MainGui.AddCheckBox("x132 y" y " w25 h24")
     WorkflowLaunchFoxholeCheck := MainGui.AddCheckBox("x194 y" y " w25 h24")
+    WorkflowSequentialLoginCheck := MainGui.AddCheckBox("x252 y" y " w145 h24", "Sequential Login?")
+    WorkflowSequentialLoginCheck.OnEvent("Click", WorkflowSequentialLoginChanged)
+    WorkflowSequentialCountCombo := MainGui.AddDropDownList("x405 y" (y-1) " w52 r10", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
+    WorkflowSequentialCountCombo.Choose(1)
+    WorkflowSequentialCountCombo.OnEvent("Change", UpdateWorkflowSequencePreview)
+    MainGui.AddText("x463 y" (y+3) " w72 h22", "at once")
+    RegisterTooltip(WorkflowSequentialLoginCheck, "Continuously keep the chosen number of workflow accounts in Foxhole. When one closes, the next included account launches in account-row order, then the sequence loops.")
+    RegisterTooltip(WorkflowSequentialCountCombo, "Maximum number of included workflow accounts kept online at the same time.")
     y += 28
     MainGui.AddText("x12 y" y " w92 h24", "Steam")
     WorkflowResetSteamCheck := MainGui.AddCheckBox("x132 y" y " w25 h24")
@@ -1103,7 +1124,7 @@ BuildMainGui()
     for ctrl in [WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck, WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck]
         ctrl.OnEvent("Click", UpdateWorkflowSequencePreview)
 
-    y += 32
+    y += 34
     WorkflowSequenceText := MainGui.AddText("x12 y" y " w315 h30 +Wrap +0x200", "Next run: No operations selected.")
     WorkflowRunButton := MainGui.AddButton("x337 y" y " w110 h28 Default", "Run Workflow")
     WorkflowRunButton.OnEvent("Click", RunSelectedWorkflow)
@@ -1111,7 +1132,7 @@ BuildMainGui()
     WorkflowStopButton.Enabled := false
     WorkflowStopButton.OnEvent("Click", StopWorkflow)
 
-    y += 34
+    y += 40
     workflowEditorEndY := y
     WorkflowEditorCollapseHeight := workflowEditorEndY - workflowEditorStartY
 
@@ -1148,10 +1169,10 @@ BuildMainGui()
     ShowOverlayCheck := MainGui.AddCheckBox("x145 y" y " w118 h24", "Show Overlay?")
     ShowOverlayCheck.Value := Settings["ShowOverlay"] ? 1 : 0
     ShowOverlayCheck.OnEvent("Click", ShowOverlayChanged)
-    ShowTooltipsCheck := MainGui.AddCheckBox("x273 y" y " w115 h24", "Show Tooltips?")
-    ShowTooltipsCheck.Value := Settings["ShowHotkeyTooltips"] ? 1 : 0
-    ShowTooltipsCheck.OnEvent("Click", ShowHotkeyTooltipsChanged)
-    ShowUiTooltipsCheck := MainGui.AddCheckBox("x398 y" y " w139 h24", "Show UI Tooltips?")
+    ShowStatusOverlayCheck := MainGui.AddCheckBox("x273 y" y " w132 h24", "Status Overlay?")
+    ShowStatusOverlayCheck.Value := Settings["ShowStatusOverlay"] ? 1 : 0
+    ShowStatusOverlayCheck.OnEvent("Click", ShowStatusOverlayChanged)
+    ShowUiTooltipsCheck := MainGui.AddCheckBox("x410 y" y " w127 h24", "UI Tooltips?")
     ShowUiTooltipsCheck.Value := Settings["ShowUiTooltips"] ? 1 : 0
     ShowUiTooltipsCheck.OnEvent("Click", ShowUiTooltipsChanged)
 
@@ -1159,6 +1180,9 @@ BuildMainGui()
     MouseFocusCheck := MainGui.AddCheckBox("x12 y" y " w160 h24", "Mouse Focus On?")
     MouseFocusCheck.Value := Settings["MouseFocusOn"] ? 1 : 0
     MouseFocusCheck.OnEvent("Click", MouseFocusSettingChanged)
+    ShowTooltipsCheck := MainGui.AddCheckBox("x180 y" y " w125 h24", "Hotkey Tooltips?")
+    ShowTooltipsCheck.Value := Settings["ShowHotkeyTooltips"] ? 1 : 0
+    ShowTooltipsCheck.OnEvent("Click", ShowHotkeyTooltipsChanged)
     y += 30
     settingsSectionEndY := y
 
@@ -5811,6 +5835,7 @@ CaptureFoxholeWindowSnapshot()
 FinishSequentialFoxholeLaunches(skipped := 0)
 {
     global SequentialLaunchActive, SequentialLaunchQueue, SequentialLaunchSkipped, SandboxieFoxholeAllButton, MainLaunchSteamButton, MainLaunchSteamFoxholeButton, MainLaunchFoxholeButton, CombinedLaunchActive, StatusText, WorkflowRunning
+    global SequentialLoginActive, SequentialLoginRefillPending
 
     SetTimer(WaitForSequentialFoxholeWindow, 0)
     SequentialLaunchActive := false
@@ -5828,6 +5853,15 @@ FinishSequentialFoxholeLaunches(skipped := 0)
     if IsObject(MainLaunchFoxholeButton)
         MainLaunchFoxholeButton.Enabled := true
     CombinedLaunchActive := false
+    if SequentialLoginActive
+    {
+        SequentialLoginRefillPending := false
+        ; Keep the monitor periodic after each completed launch. A negative period
+        ; turns it into a one-shot timer and caused refills to stop after startup.
+        SetTimer(MonitorSequentialLoginWorkflow, 750)
+        UpdateSequentialLoginStatus()
+        return
+    }
     if WorkflowRunning
         FinishWorkflow("Workflow completed. Finished launching Foxhole.")
     suffix := SequentialLaunchSkipped ? " Skipped " SequentialLaunchSkipped " selected account(s) without a valid executable." : ""
@@ -9441,19 +9475,21 @@ JoinText(items, separator)
 GetCurrentWorkflowDefinition(name := "")
 {
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
-    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowIncludedAccountNames
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowIncludedAccountNames
     accountNames := []
     for accountName in WorkflowIncludedAccountNames
         accountNames.Push(accountName)
+    sequentialCount := IsObject(WorkflowSequentialCountCombo) && WorkflowSequentialCountCombo.Value ? WorkflowSequentialCountCombo.Value : 1
     return {name:name, accountNames:accountNames, launchSteamMinimized:WorkflowLaunchSteamMinimizedCheck.Value=1, resetFoxhole:WorkflowResetFoxholeCheck.Value=1, launchFoxhole:WorkflowLaunchFoxholeCheck.Value=1,
         resetSteam:WorkflowResetSteamCheck.Value=1, launchSteam:WorkflowLaunchSteamCheck.Value=1,
-        resetSandboxes:WorkflowResetSandboxesCheck.Value=1, verifySandboxes:WorkflowVerifySandboxesCheck.Value=1}
+        resetSandboxes:WorkflowResetSandboxesCheck.Value=1, verifySandboxes:WorkflowVerifySandboxesCheck.Value=1,
+        sequentialLogin:WorkflowSequentialLoginCheck.Value=1, sequentialCount:Max(1, Min(10, Integer(sequentialCount)))}
 }
 
 ApplyWorkflowDefinition(def)
 {
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
-    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowIncludedAccountNames
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowIncludedAccountNames
     WorkflowIncludedAccountNames := []
     if def.HasOwnProp("accountNames")
         for accountName in def.accountNames
@@ -9465,6 +9501,9 @@ ApplyWorkflowDefinition(def)
     WorkflowLaunchSteamCheck.Value := def.launchSteam ? 1 : 0
     WorkflowResetSandboxesCheck.Value := def.resetSandboxes ? 1 : 0
     WorkflowVerifySandboxesCheck.Value := def.verifySandboxes ? 1 : 0
+    WorkflowSequentialLoginCheck.Value := def.HasOwnProp("sequentialLogin") && def.sequentialLogin ? 1 : 0
+    WorkflowSequentialCountCombo.Choose(def.HasOwnProp("sequentialCount") ? Max(1, Min(10, Integer(def.sequentialCount))) : 1)
+    ApplySequentialWorkflowControlState()
     UpdateWorkflowAccountSummary()
     UpdateWorkflowSequencePreview()
 }
@@ -9475,6 +9514,11 @@ UpdateWorkflowSequencePreview(*)
     if !IsObject(WorkflowSequenceText)
         return
     def := GetCurrentWorkflowDefinition()
+    if def.sequentialLogin
+    {
+        WorkflowSequenceText.Text := "Next run: Keep " def.sequentialCount " account(s) online, rotating in account order."
+        return
+    }
     steps := []
     if def.resetFoxhole
         steps.Push("Close Foxhole")
@@ -9682,6 +9726,8 @@ LoadWorkflowPresetsConfig()
             resetSandboxes:IniRead(CONFIG_FILE, section, "ResetSandboxes", "0")="1",
             verifySandboxes:IniRead(CONFIG_FILE, section, "VerifySandboxes", "0")="1",
             launchSteamMinimized:IniRead(CONFIG_FILE, section, "LaunchSteamMinimized", "1")="1",
+            sequentialLogin:IniRead(CONFIG_FILE, section, "SequentialLogin", "0")="1",
+            sequentialCount:Max(1, Min(10, Integer(IniRead(CONFIG_FILE, section, "SequentialCount", "1")))),
             accountNames:SplitWorkflowAccountNames(IniRead(CONFIG_FILE, section, "AccountNames", ""))})
     }
     WorkflowFavorites := []
@@ -9706,6 +9752,8 @@ SaveWorkflowPresetsConfig()
         text .= "`nResetSteam=" (p.resetSteam?1:0) "`nLaunchSteam=" (p.launchSteam?1:0)
         text .= "`nResetSandboxes=" (p.resetSandboxes?1:0) "`nVerifySandboxes=" (p.verifySandboxes?1:0)
         text .= "`nLaunchSteamMinimized=" ((!p.HasOwnProp("launchSteamMinimized") || p.launchSteamMinimized)?1:0)
+        text .= "`nSequentialLogin=" (p.HasOwnProp("sequentialLogin") && p.sequentialLogin ? 1 : 0)
+        text .= "`nSequentialCount=" (p.HasOwnProp("sequentialCount") ? Max(1, Min(10, Integer(p.sequentialCount))) : 1)
         text .= "`nAccountNames=" JoinText(p.HasOwnProp("accountNames") ? p.accountNames : [], "|")
         IniWrite(text, CONFIG_FILE, section)
     }
@@ -9736,7 +9784,7 @@ RunWorkflowDefinition(def)
         StatusText.Text := "Status: No accounts included."
         return
     }
-    if !(def.resetFoxhole || def.launchFoxhole || def.resetSteam || def.launchSteam || def.resetSandboxes || def.verifySandboxes)
+    if !(def.HasOwnProp("sequentialLogin") && def.sequentialLogin) && !(def.resetFoxhole || def.launchFoxhole || def.resetSteam || def.launchSteam || def.resetSandboxes || def.verifySandboxes)
     {
         StatusText.Text := "Status: No workflow operations selected."
         return
@@ -9746,6 +9794,11 @@ RunWorkflowDefinition(def)
     WorkflowStopButton.Enabled := true
     try
     {
+        if def.HasOwnProp("sequentialLogin") && def.sequentialLogin
+        {
+            StartSequentialLoginWorkflow(accounts, def.HasOwnProp("sequentialCount") ? def.sequentialCount : 1)
+            return
+        }
         if def.resetFoxhole
             WorkflowCloseSelectedFoxhole(accounts)
         if def.resetSteam
@@ -9776,8 +9829,9 @@ RunWorkflowDefinition(def)
 
 FinishWorkflow(message)
 {
-    global WorkflowRunning, WorkflowRunButton, WorkflowStopButton, StatusText
+    global WorkflowRunning, WorkflowRunButton, WorkflowStopButton, StatusText, WorkflowStatusMessage
     WorkflowRunning := false
+    WorkflowStatusMessage := ""
     if IsObject(WorkflowRunButton)
         WorkflowRunButton.Enabled := true
     if IsObject(WorkflowStopButton)
@@ -9788,6 +9842,7 @@ FinishWorkflow(message)
 StopWorkflow(*)
 {
     global CombinedLaunchActive
+    StopSequentialLoginWorkflow(false)
     if CombinedLaunchActive
         AbortCombinedSteamFoxholeLaunch("Workflow stopped.", false)
     StopSequentialFoxholeLaunches()
@@ -9917,6 +9972,7 @@ LoadConfig()
     Settings["DefaultClickY"] := Integer(IniRead(CONFIG_FILE, "Settings", "DefaultClickY", "0"))
     Settings["MainAlwaysOnTop"] := IniRead(CONFIG_FILE, "Settings", "MainAlwaysOnTop", "0") = "1"
     Settings["ShowOverlay"] := IniRead(CONFIG_FILE, "Settings", "ShowOverlay", "1") = "1"
+    Settings["ShowStatusOverlay"] := IniRead(CONFIG_FILE, "Settings", "ShowStatusOverlay", "1") = "1"
     Settings["ShowHotkeyTooltips"] := IniRead(CONFIG_FILE, "Settings", "ShowHotkeyTooltips", "1") = "1"
     Settings["ShowUiTooltips"] := IniRead(CONFIG_FILE, "Settings", "ShowUiTooltips", "1") = "1"
     Settings["MouseFocusOn"] := IniRead(CONFIG_FILE, "Settings", "MouseFocusOn", "1") = "1"
@@ -10124,6 +10180,7 @@ SaveConfig()
     IniDelete(CONFIG_FILE, "Settings", "AutoRename")
     IniWrite(Settings["MainAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "MainAlwaysOnTop")
     IniWrite(Settings["ShowOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowOverlay")
+    IniWrite(Settings["ShowStatusOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowStatusOverlay")
     IniWrite(Settings["ShowHotkeyTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowHotkeyTooltips")
     IniWrite(Settings["ShowUiTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowUiTooltips")
     IniWrite(Settings["MouseFocusOn"] ? "1" : "0", CONFIG_FILE, "Settings", "MouseFocusOn")
@@ -10177,10 +10234,180 @@ SaveConfig()
     }
 }
 
+
+WorkflowSequentialLoginChanged(*)
+{
+    ApplySequentialWorkflowControlState()
+    UpdateWorkflowSequencePreview()
+}
+
+ApplySequentialWorkflowControlState()
+{
+    global WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo
+    global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck
+    if !IsObject(WorkflowSequentialLoginCheck)
+        return
+    enabled := WorkflowSequentialLoginCheck.Value = 1
+    WorkflowSequentialCountCombo.Enabled := enabled
+    for ctrl in [WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck, WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck]
+        ctrl.Enabled := !enabled
+}
+
+StartSequentialLoginWorkflow(accounts, maxOnline)
+{
+    global SequentialLoginActive, SequentialLoginAccounts, SequentialLoginMaxOnline, SequentialLoginNextPosition
+    global SequentialLoginRefillPending
+    SequentialLoginAccounts := []
+    for idx in accounts
+    {
+        inserted := false
+        for pos, existing in SequentialLoginAccounts
+        {
+            if idx < existing
+            {
+                SequentialLoginAccounts.InsertAt(pos, idx)
+                inserted := true
+                break
+            }
+        }
+        if !inserted
+            SequentialLoginAccounts.Push(idx)
+    }
+    SequentialLoginMaxOnline := Max(1, Min(10, Integer(maxOnline), SequentialLoginAccounts.Length))
+    SequentialLoginNextPosition := 1
+    SequentialLoginActive := true
+    SequentialLoginRefillPending := false
+    SetTimer(MonitorSequentialLoginWorkflow, 750)
+    MonitorSequentialLoginWorkflow()
+}
+
+StopSequentialLoginWorkflow(finish := true)
+{
+    global SequentialLoginActive, SequentialLoginAccounts, SequentialLoginRefillPending
+    SetTimer(MonitorSequentialLoginWorkflow, 0)
+    SequentialLoginActive := false
+    SequentialLoginAccounts := []
+    SequentialLoginRefillPending := false
+    if finish
+        FinishWorkflow("Sequential login stopped.")
+}
+
+GetSequentialLoginOpenMap()
+{
+    global SequentialLoginAccounts, SandboxieAccounts
+    open := Map()
+    ScanWindows(false)
+    for idx in SequentialLoginAccounts
+        if idx >= 1 && idx <= SandboxieAccounts.Length && IsFoxholeAccountAlreadyOpen(idx, SandboxieAccounts[idx])
+            open[idx] := true
+    return open
+}
+
+MonitorSequentialLoginWorkflow(*)
+{
+    global SequentialLoginActive, SequentialLoginAccounts, SequentialLoginMaxOnline, SequentialLoginNextPosition
+    global SequentialLoginRefillPending, SequentialLaunchActive, SandboxieAccounts
+    if !SequentialLoginActive || SequentialLaunchActive || SequentialLoginRefillPending
+        return
+    if SequentialLoginAccounts.Length = 0
+    {
+        StopSequentialLoginWorkflow()
+        return
+    }
+    open := GetSequentialLoginOpenMap()
+    if open.Count >= SequentialLoginMaxOnline
+    {
+        UpdateSequentialLoginStatus(open.Count)
+        return
+    }
+    attempts := 0
+    while attempts < SequentialLoginAccounts.Length
+    {
+        if SequentialLoginNextPosition > SequentialLoginAccounts.Length
+            SequentialLoginNextPosition := 1
+        idx := SequentialLoginAccounts[SequentialLoginNextPosition]
+        SequentialLoginNextPosition++
+        attempts++
+        if open.Has(idx)
+            continue
+        SequentialLoginRefillPending := true
+        SetWorkflowStatus("Sequential login: launching account " idx " (" Trim(SandboxieAccounts[idx].name) ")...")
+        if !StartFoxholeLaunchesForIndices([idx], false)
+        {
+            SequentialLoginRefillPending := false
+            SetTimer(MonitorSequentialLoginWorkflow, -750)
+        }
+        return
+    }
+    UpdateSequentialLoginStatus(open.Count)
+}
+
+UpdateSequentialLoginStatus(openCount := -1)
+{
+    global SequentialLoginActive, SequentialLoginMaxOnline, SequentialLoginAccounts, SequentialLoginNextPosition, SandboxieAccounts
+    if !SequentialLoginActive
+        return
+    if openCount < 0
+        openCount := GetSequentialLoginOpenMap().Count
+    nextText := ""
+    if SequentialLoginAccounts.Length
+    {
+        pos := SequentialLoginNextPosition > SequentialLoginAccounts.Length ? 1 : SequentialLoginNextPosition
+        idx := SequentialLoginAccounts[pos]
+        nextText := "; next: account " idx " (" Trim(SandboxieAccounts[idx].name) ")"
+    }
+    SetWorkflowStatus("Sequential login active — " openCount "/" SequentialLoginMaxOnline " online" nextText ".")
+}
+
+SetWorkflowStatus(message)
+{
+    global WorkflowStatusMessage, StatusText
+    WorkflowStatusMessage := message
+    if IsObject(StatusText)
+        StatusText.Text := "Status: " message
+}
+
+ShowStatusOverlayChanged(ctrl, *)
+{
+    global Settings, CONFIG_FILE
+    Settings["ShowStatusOverlay"] := ctrl.Value = 1
+    IniWrite(Settings["ShowStatusOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowStatusOverlay")
+    UpdateStatusOverlay()
+}
+
+UpdateStatusOverlay(*)
+{
+    global Settings, StatusOverlayGui, StatusOverlayText, StatusText, WorkflowRunning, WorkflowStatusMessage
+    if !Settings["ShowStatusOverlay"]
+    {
+        if IsObject(StatusOverlayGui)
+            try StatusOverlayGui.Hide()
+        return
+    }
+    if !IsObject(StatusOverlayGui)
+    {
+        StatusOverlayGui := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20")
+        StatusOverlayGui.BackColor := "202020"
+        StatusOverlayGui.SetFont("s10 cFFFFFF", "Segoe UI Semibold")
+        StatusOverlayText := StatusOverlayGui.AddText("x10 y5 w680 h24 +Center +0x200", "")
+    }
+    text := WorkflowRunning && WorkflowStatusMessage != "" ? WorkflowStatusMessage : (IsObject(StatusText) ? RegExReplace(StatusText.Text, "^Status:\\s*", "") : "Ready")
+    StatusOverlayText.Text := text
+    primary := MonitorGetPrimary()
+    MonitorGetWorkArea(primary, &left, &top, &right, &bottom)
+    width := Min(700, right-left)
+    x := left + Floor(((right-left)-width)/2)
+    try StatusOverlayGui.Show("NA x" x " y" top " w" width " h34")
+}
+
 CleanupAll(*)
 {
-    global Instances
-    global TitleOverlays, LayoutEditorOverlays
+    global StatusOverlayGui, Instances, TitleOverlays, LayoutEditorOverlays
+    SetTimer(UpdateStatusOverlay, 0)
+    SetTimer(MonitorSequentialLoginWorkflow, 0)
+    if IsObject(StatusOverlayGui)
+        try StatusOverlayGui.Destroy()
 
     for _, preview in LayoutEditorOverlays
         try preview.gui.Destroy()
