@@ -28,6 +28,6 @@ Get the program [here](https://github.com/Tommythebold/Foxhole-MultiBoxer/releas
 
 For help or bug reports, contact Tommythebold on Discord.
 
-## License
-
-MIT License.
+# License & Credits
+* **Code:** Open-source under the **MIT License**.
+* **Artwork:** Official *Foxhole* assets owned entirely by [Siege Camp](https://siegecamp.com). Used purely for non-commercial community utility. The open-source license does **not** apply to these copyrighted graphics.
