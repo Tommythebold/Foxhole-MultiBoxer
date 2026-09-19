@@ -2,7 +2,7 @@
 
 Foxhole MultiBoxer is an AutoHotkey v2 tool for managing multiple Foxhole games and associated Steam/Sandboxie setups. 
 
-Get the program [here](https://github.com/Tommythebold/Foxhole-MultiBoxer/releases), and read the Quick Setup. You'll need [Sandboxie Plus](https://sandboxie-plus.com/downloads/) too of course.
+Get the program [here](https://github.com/Tommythebold/Foxhole-MultiBoxer/releases), and read the [Quick Setup](https://github.com/Tommythebold/Foxhole-MultiBoxer#quick-setup). You'll need [Sandboxie Plus](https://sandboxie-plus.com/downloads/) too of course.
 
 **Features include:**
 - Multi-account Steam/Foxhole management and launching. Includes steam auto-login. 
