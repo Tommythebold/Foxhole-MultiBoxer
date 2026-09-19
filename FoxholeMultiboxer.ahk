@@ -5,10 +5,18 @@ Persistent
 ;@Ahk2Exe-SetMainIcon Bin\FoxholeMultiBoxerIcon.ico
 
 global APP_NAME := "Foxhole Multiboxer"
-global APP_VERSION := "0.1"
+global APP_VERSION := "1.0.0"
 global APP_TITLE := APP_NAME " v" APP_VERSION
 global CONFIG_DIR := A_AppData "\" APP_NAME
 global CONFIG_FILE := CONFIG_DIR "\Settings.ini"
+global GitHubLatestReleaseApi := "https://api.github.com/repos/Tommythebold/Foxhole-MultiBoxer/releases/latest"
+global GitHubReleasesUrl := "https://github.com/Tommythebold/Foxhole-MultiBoxer/releases"
+global LatestVersion := ""
+global UpdateAvailable := false
+global UpdateCheckComplete := false
+global UpdateLinkControl := ""
+global UpdateLinkVisible := false
+global UpdateLinkShift := 24
 
 global ActionNames := ["AutoClick", "AutoWalk", "AutoReverse", "ClickHold", "RightHold", "VSpam", "TrainSlow", "MouseFocus", "SwitchSlot", "Swap", "SwapFirst", "ShowFoxhole", "ShowSteam"]
 global ActionLabels := Map(
@@ -58,6 +66,12 @@ global AccountSwapKeys := Map()
 global AccountSwapButtons := Map()
 global AccountSwapTargetLabels := Map()
 global HotkeysExpandedSections := Map("Game", false, "Manage", false, "Swap", false)
+global HotkeysControlLayout := []
+global HotkeysSectionHeaders := Map()
+global HotkeysSectionGeometry := Map()
+global LayoutEditorContentInitialized := false
+global LayoutEditorNeedsRefresh := true
+global UiTransitionInProgress := false
 
 global Instances := []
 global SelectedIndex := 0
@@ -86,6 +100,7 @@ global SandboxiePopupWatcherIntervalMs := 250
 global SandboxiePopupLastHandledHwnd := 0
 global SandboxiePopupLastHandledAt := 0
 global SandboxieSteamMinimizeBoxes := Map()
+global CertifiedSandboxieSteamBoxes := Map()
 
 global FoxholeWindowEventHook := 0
 global FoxholeWindowEventCallback := 0
@@ -112,6 +127,10 @@ global HotkeysAlwaysOnTopCheck := ""
 global SandboxieAlwaysOnTopCheck := ""
 
 global MainGui := ""
+global MainGuiFixedWidth := 559
+global EmbeddedPageScrollOffsets := Map()
+global EmbeddedPageContentHeights := Map()
+global EmbeddedPageViewportHeights := Map()
 global HotkeysGui := ""
 global LV := ""
 global StatusText := ""
@@ -179,7 +198,7 @@ global CombinedLaunchActive := false
 global CombinedLaunchAccounts := []
 global CombinedSteamReadyPolls := Map()
 global CombinedSteamLaunchStartedAt := 0
-global CombinedSteamTimeoutMs := 120000
+global CombinedSteamTimeoutMs := 900000
 global CombinedSteamPaths := ""
 global PendingFoxholeRenameActive := false
 global PendingFoxholeRenameIndex := 0
@@ -197,9 +216,11 @@ global IntervalMinimums := Map(
 )
 global DefaultIntervals := Map(
     "AutoClick", 50,
-    "TrainSlow", 300
+    "TrainSlow", 3400
 )
-global TrainSlowHoldDuration := 200
+global TrainSlowDefaultHoldDuration := 2000
+global TrainSlowHoldDuration := 2000
+global TrainSlowHoldEdit := ""
 global LayoutEditorGui := ""
 global LayoutEditorRowsGui := ""
 global LayoutEditorSlots := []
@@ -228,6 +249,7 @@ global RebindStatus := ""
 global RebindingAction := ""
 global RebindReleaseKeys := []
 global RebindButtons := Map()
+global RegisteredHotkeyKeys := Map()
 global PollKeyList := []
 global ModifierKeyDefs := [
     { symbol: "^", keys: ["LControl", "RControl"] },
@@ -250,7 +272,6 @@ global WorkflowResetSteamCheck := ""
 global WorkflowLaunchSteamCheck := ""
 global WorkflowResetSandboxesCheck := ""
 global WorkflowVerifySandboxesCheck := ""
-global WorkflowLaunchSteamMinimizedCheck := ""
 global WorkflowSequentialLoginCheck := ""
 global WorkflowSequentialCountCombo := ""
 global WorkflowIncludedAccountNames := []
@@ -267,6 +288,8 @@ global WorkflowEditorExpanded := false
 global WorkflowEditorHeader := ""
 global WorkflowEditorControls := []
 global WorkflowBelowEditorControls := []
+global WorkflowBelowEditorBaseY := Map()
+global WorkflowBelowEditorPositionExpanded := true
 global WorkflowEditorCollapseHeight := 0
 global SettingsSectionExpanded := false
 global SettingsSectionHeader := ""
@@ -281,10 +304,13 @@ global WorkflowStatusMessage := ""
 global StatusOverlayGui := ""
 global StatusOverlayText := ""
 global ShowStatusOverlayCheck := ""
+global FoxholeHiddenTaskbars := Map()
+global FoxholeTaskbarMonitor := 0
 
 global Settings := Map(
     "ClickInterval", 50,
-    "TrainSlowInterval", 300,
+    "TrainSlowInterval", 3400,
+    "TrainSlowHoldDuration", 2000,
     "DefaultClickX", 0,
     "DefaultClickY", 0,
     "MainAlwaysOnTop", false,
@@ -326,12 +352,15 @@ InitializeLayoutPositionWatcher()
 OnMessage(0x84, LayoutPreviewHitTest, -1)
 SetTimer(InitialWindowDiscovery, -1500)
 SetTimer(RestoreMainGuiAfterStartup, -1900)
-SetTimer(MaintainTitleOverlays, 250)
-SetTimer(UpdateStatusOverlay, 200)
+SetTimer(MaintainTitleOverlays, 350)
+SetTimer(UpdateStatusOverlay, 350)
+SetTimer(MaintainFoxholeTaskbarCover, 250)
 
 SetTimer(MonitorSandboxieSupporterPopup, SandboxiePopupWatcherIntervalMs)
-SetTimer(MinimizeLaunchedSandboxieSteamWindows, 250)
-SetTimer(MonitorGuiTooltips, 100)
+SetTimer(MonitorGuiTooltips, 200)
+SetTimer(CheckForUpdate, -1000)
+SetTimer(RetryUpdateCheckIfNeeded, -6000)
+SetTimer(CheckForUpdate, 1800000)
 OnExit(CleanupAll)
 
 LayoutPreviewHitTest(wParam, lParam, msg, hwnd)
@@ -340,6 +369,130 @@ LayoutPreviewHitTest(wParam, lParam, msg, hwnd)
 
     if IsObject(LayoutEditorOverlays) && LayoutEditorOverlays.Has(hwnd)
         return -1
+}
+
+CheckForUpdate()
+{
+    global APP_VERSION, GitHubLatestReleaseApi, LatestVersion, UpdateAvailable, UpdateCheckComplete
+
+    try
+    {
+        request := ComObject("WinHttp.WinHttpRequest.5.1")
+        request.SetTimeouts(3000, 3000, 5000, 5000)
+        cacheBustedUrl := GitHubLatestReleaseApi (InStr(GitHubLatestReleaseApi, "?") ? "&" : "?") "_=" A_TickCount
+        request.Open("GET", cacheBustedUrl, false)
+        request.SetRequestHeader("Accept", "application/vnd.github+json")
+        request.SetRequestHeader("User-Agent", "Foxhole-Multiboxer/" APP_VERSION)
+        request.SetRequestHeader("X-GitHub-Api-Version", "2022-11-28")
+        request.SetRequestHeader("Cache-Control", "no-cache, no-store, must-revalidate")
+        request.SetRequestHeader("Pragma", "no-cache")
+        request.Send()
+
+        if request.Status != 200
+            return
+        if !RegExMatch(request.ResponseText, '"tag_name"\s*:\s*"([^"]+)"', &tagMatch)
+            return
+
+        checkedVersion := NormalizeVersion(tagMatch[1])
+        if checkedVersion = ""
+            return
+
+        LatestVersion := checkedVersion
+        UpdateAvailable := IsVersionNewer(LatestVersion, APP_VERSION)
+        UpdateCheckComplete := true
+        ApplyUpdateState()
+    }
+    catch
+    {
+    }
+}
+
+RetryUpdateCheckIfNeeded()
+{
+    global UpdateCheckComplete
+    if !UpdateCheckComplete
+        CheckForUpdate()
+}
+
+ApplyUpdateState()
+{
+    global MainGui, UpdateAvailable, UpdateLinkControl, LatestVersion, GitHubReleasesUrl
+    if !IsObject(MainGui) || !MainGui.Hwnd || !IsObject(UpdateLinkControl)
+        return
+
+    if UpdateAvailable
+    {
+        label := LatestVersion != "" ? "Update Available — v" LatestVersion : "Update Available"
+        try UpdateLinkControl.Text := '<a href="' GitHubReleasesUrl '">' label '</a>'
+    }
+    SetUpdateLinkVisibility(UpdateAvailable)
+}
+
+SetUpdateLinkVisibility(visible)
+{
+    global MainGui, UpdateLinkControl, UpdateLinkVisible, UpdateLinkShift, MainPageControls
+
+    visible := visible ? true : false
+    if !IsObject(MainGui) || !MainGui.Hwnd || !IsObject(UpdateLinkControl) || visible = UpdateLinkVisible
+        return
+
+    SetGuiRedraw(MainGui, false)
+    try
+    {
+        delta := visible ? UpdateLinkShift : -UpdateLinkShift
+        if visible
+            UpdateLinkControl.Visible := true
+
+        for ctrl in MainPageControls
+        {
+            if !IsObject(ctrl) || !ctrl.Hwnd
+                continue
+            try
+            {
+                ctrl.GetPos(&cx, &cy, &cw, &ch)
+                ctrl.Move(, cy + delta)
+            }
+        }
+
+        UpdateLinkVisible := visible
+        if !visible
+            UpdateLinkControl.Visible := false
+
+        ReflowCurrentPageAfterBannerChange()
+        KeepMainGuiInsideWorkArea()
+    }
+    finally
+    {
+        SetGuiRedraw(MainGui, true)
+        try DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
+    }
+}
+
+NormalizeVersion(versionText)
+{
+    versionText := Trim(versionText)
+    versionText := RegExReplace(versionText, "i)^v")
+    if !RegExMatch(versionText, "^\d+(?:\.\d+)*", &versionMatch)
+        return ""
+    return versionMatch[0]
+}
+
+IsVersionNewer(candidateVersion, currentVersion)
+{
+    candidateParts := StrSplit(candidateVersion, ".")
+    currentParts := StrSplit(currentVersion, ".")
+    partCount := Max(candidateParts.Length, currentParts.Length)
+
+    Loop partCount
+    {
+        candidatePart := A_Index <= candidateParts.Length ? Integer(candidateParts[A_Index]) : 0
+        currentPart := A_Index <= currentParts.Length ? Integer(currentParts[A_Index]) : 0
+        if candidatePart > currentPart
+            return true
+        if candidatePart < currentPart
+            return false
+    }
+    return false
 }
 
 RegisterTooltip(ctrl, provider)
@@ -360,6 +513,26 @@ UnregisterTooltip(ctrl)
     try hwnd := ctrl.Hwnd
     if hwnd && GuiTooltips.Has(hwnd)
         GuiTooltips.Delete(hwnd)
+}
+
+ClearGuiTooltipsForGui(guiObj)
+{
+    global GuiTooltips, GuiLastTooltipHwnd
+    if !IsObject(guiObj) || !guiObj.Hwnd
+        return
+    try
+    {
+        for hwnd in WinGetControlsHwnd("ahk_id " guiObj.Hwnd)
+        {
+            if GuiTooltips.Has(hwnd)
+                GuiTooltips.Delete(hwnd)
+            if GuiLastTooltipHwnd = hwnd
+            {
+                ToolTip("", , , 20)
+                GuiLastTooltipHwnd := 0
+            }
+        }
+    }
 }
 
 RegisterLayoutEditorTooltip(ctrl, provider)
@@ -391,7 +564,10 @@ ClearLayoutEditorTooltips()
 
 MonitorGuiTooltips(*)
 {
-    global GuiTooltips, GuiLastTooltipHwnd, Settings
+    global GuiTooltips, GuiLastTooltipHwnd, Settings, UiTransitionInProgress
+
+    if UiTransitionInProgress
+        return
 
     if !Settings["ShowUiTooltips"]
     {
@@ -510,12 +686,12 @@ HotkeyActionTooltip(action)
     global CurrentKeys, Settings, IntervalSettings, MouseFocusEnabled
     descriptions := Map(
         "AutoClick", "Toggle repeated left-clicking in the controlled Foxhole window. Use Shift+Scroll to adjust this account’s interval; increasing past 500 ms pauses it.",
-        "AutoWalk", "Toggle repeated W input in the controlled Foxhole window.",
-        "AutoReverse", "Toggle repeated S input in the controlled Foxhole window.",
-        "ClickHold", "Toggle holding the left mouse button in the controlled Foxhole window.",
-        "RightHold", "Toggle holding the right mouse button in the controlled Foxhole window.",
-        "VSpam", "Toggle repeated V input in the controlled Foxhole window.",
-        "TrainSlow", "Periodically holds the configured Train Slow output key. Use Shift+Scroll to adjust this account’s interval.",
+        "AutoWalk", "Toggle holding the configured Forward output key. The key-down is refreshed every 50 ms, matching the standalone autoclicker.",
+        "AutoReverse", "Toggle holding the configured Reverse output key. The key-down is refreshed every 50 ms, matching the standalone autoclicker.",
+        "ClickHold", "Toggle holding the left mouse button. The button-down is refreshed every 50 ms, matching the standalone autoclicker.",
+        "RightHold", "Toggle holding the right mouse button. The button-down is refreshed every 200 ms, matching the standalone autoclicker.",
+        "VSpam", "Toggle repeated presses of the configured Submit Large Item output key every 50 ms.",
+        "TrainSlow", "Periodically holds the configured Train Slow output key. Shift+Scroll changes the global interval; Alt+Scroll changes the global hold duration. Both values apply to every account.",
         "MouseFocus", "Toggle mouse-hover focus mode for controlled Foxhole windows.",
         "SwitchSlot", "Assign the focused Foxhole window to another numbered slot without moving it.",
         "Swap", "Swap positions and sizes with another Foxhole window without changing slot assignments.",
@@ -525,7 +701,12 @@ HotkeyActionTooltip(action)
     )
     text := "Current key: " DisplayNameForHotkeyString(CurrentKeys[action]) "`nClick to rebind.`n" descriptions[action]
     if IntervalSettings.Has(action)
-        text .= "`nInterval is saved separately for each account. Use Shift+Scroll while this action is active."
+    {
+        if action = "TrainSlow"
+            text .= "`nTrain Slow timing is global for all accounts. Shift+Scroll adjusts interval; Alt+Scroll adjusts hold duration while Train Slow is active."
+        else
+            text .= "`nInterval is saved separately for each account. Use Shift+Scroll while this action is active."
+    }
     if action = "MouseFocus"
         text .= "`nCurrent state: " (MouseFocusEnabled ? "Enabled" : "Disabled")
     return text
@@ -543,6 +724,8 @@ IntervalTooltip(action, reset := false)
     current := Settings[IntervalSettings[action]]
     if reset
         return "Reset " ActionLabels[action] " interval from " current " ms to " DefaultIntervals[action] " ms."
+    if action = "TrainSlow"
+        return "Delay between Train Slow pulses: " current " ms.`nRange: 10-5000 ms. This value is shared by every account.`nShift+Scroll adjusts it while Train Slow is active; Alt+Scroll adjusts hold duration."
     return "Delay for " ActionLabels[action] ": " current " ms.`nMinimum: " IntervalMinimums[action] " ms.`nLower values repeat faster; the value saves when the field loses focus."
 }
 
@@ -851,6 +1034,7 @@ SetMainBanner(fileName)
 SetMainBannerVisibility(visible)
 {
     global MainGui, BannerPicture, BannerVisible, MainTipText, LV, MainDynamicControls, CurrentMainPage
+    global UpdateLinkControl
 
     visible := visible ? true : false
     if visible = BannerVisible || !IsObject(BannerPicture)
@@ -861,6 +1045,12 @@ SetMainBannerVisibility(visible)
 
     if visible
         BannerPicture.Visible := true
+
+    if IsObject(UpdateLinkControl) && UpdateLinkControl.Hwnd
+    {
+        UpdateLinkControl.GetPos(&ux, &uy, &uw, &uh)
+        UpdateLinkControl.Move(, uy + deltaY)
+    }
 
     for ctrl in [MainTipText, LV]
     {
@@ -880,12 +1070,6 @@ SetMainBannerVisibility(visible)
 
     if !visible
         BannerPicture.Visible := false
-
-    try
-    {
-        MainGui.GetPos(&guiX, &guiY, &guiW, &guiH)
-        MainGui.Move(, , , guiH + deltaY)
-    }
 
     BannerVisible := visible
     ReflowCurrentPageAfterBannerChange()
@@ -977,17 +1161,19 @@ BuildMainGui()
     global MainAlwaysOnTopCheck, ShowOverlayCheck, ShowTooltipsCheck, ShowUiTooltipsCheck, MouseFocusCheck, AutoResetSlotsCheck
     global MainDynamicControls, MainVisibleTableRows, AvailableBanners, BannerPicture, BannerDropDown
     global CurrentBannerFile, BannerVisible, MainNavButtons, MainPageControls
+    global UpdateLinkControl, UpdateLinkVisible, GitHubReleasesUrl
     global WorkflowFavoriteButtons, WorkflowPresetCombo, WorkflowFavoriteSlotCombo
     global LayoutFavoriteButtons
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
-    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowAccountSummary, WorkflowSequenceText
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowAccountSummary, WorkflowSequenceText
     global WorkflowRunButton, WorkflowStopButton
-    global WorkflowEditorExpanded, WorkflowEditorHeader, WorkflowEditorControls, WorkflowBelowEditorControls, WorkflowEditorCollapseHeight
+    global WorkflowEditorExpanded, WorkflowEditorHeader, WorkflowEditorControls, WorkflowBelowEditorControls, WorkflowBelowEditorBaseY, WorkflowEditorCollapseHeight
     global SettingsSectionExpanded, SettingsSectionHeader, SettingsSectionControls, ShowStatusOverlayCheck
 
-    MainGui := Gui("+Resize +0x02000000", APP_TITLE)
+    MainGui := Gui("+0x02000000", APP_TITLE)
     MainGui.SetFont("s9", "Segoe UI")
     SetGuiIcon(MainGui)
+    OnMessage(0x020A, EmbeddedPageMouseWheel)
 
     contentW := 535
     navY := 8
@@ -1021,6 +1207,11 @@ BuildMainGui()
 
     MainTipIndex := 1
     tipY := BannerVisible ? bannerY + bannerH + bannerGap : bannerY
+    UpdateLinkControl := MainGui.Add("Link", "x12 y" tipY " w" contentW " h20 Center", '<a href="' GitHubReleasesUrl '">Update Available</a>')
+    UpdateLinkControl.SetFont("s9 Bold", "Segoe UI")
+    RegisterTooltip(UpdateLinkControl, "A newer Foxhole Multiboxer release is available. Open the GitHub releases page.")
+    UpdateLinkVisible := false
+    UpdateLinkControl.Visible := false
     MainTipText := MainGui.AddText("x12 y" tipY " w" contentW " h40 +Wrap +Center +0x200", MainTips[MainTipIndex])
     SetTimer(RotateMainTip, 10000)
 
@@ -1115,13 +1306,11 @@ BuildMainGui()
     MainGui.AddText("x12 y" y " w92 h24", "Steam")
     WorkflowResetSteamCheck := MainGui.AddCheckBox("x132 y" y " w25 h24")
     WorkflowLaunchSteamCheck := MainGui.AddCheckBox("x194 y" y " w25 h24")
-    WorkflowLaunchSteamMinimizedCheck := MainGui.AddCheckBox("x252 y" y " w190 h24", "Launch Steam Minimized?")
-    WorkflowLaunchSteamMinimizedCheck.Value := 1
     y += 28
     MainGui.AddText("x12 y" y " w92 h24", "Sandboxes")
     WorkflowResetSandboxesCheck := MainGui.AddCheckBox("x132 y" y " w25 h24")
     WorkflowVerifySandboxesCheck := MainGui.AddCheckBox("x194 y" y " w25 h24")
-    for ctrl in [WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck, WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck]
+    for ctrl in [WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck, WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck]
         ctrl.OnEvent("Click", UpdateWorkflowSequencePreview)
 
     y += 34
@@ -1219,15 +1408,21 @@ BuildMainGui()
             ctrl.Visible := false
     }
 
+    WorkflowBelowEditorBaseY := Map()
+    for ctrl in WorkflowBelowEditorControls
+    {
+        try
+        {
+            ctrl.GetPos(&workflowCtrlX, &workflowCtrlY, &workflowCtrlW, &workflowCtrlH)
+            WorkflowBelowEditorBaseY[ctrl.Hwnd] := workflowCtrlY
+        }
+    }
+
     if !WorkflowEditorExpanded
     {
         for ctrl in WorkflowEditorControls
             ctrl.Visible := false
-        for ctrl in WorkflowBelowEditorControls
-        {
-            ctrl.GetPos(&workflowCtrlX, &workflowCtrlY, &workflowCtrlW, &workflowCtrlH)
-            ctrl.Move(, workflowCtrlY - WorkflowEditorCollapseHeight)
-        }
+        PositionWorkflowBelowControls(false)
     }
 
     MainPageControls := []
@@ -1243,7 +1438,7 @@ BuildMainGui()
                 break
             }
         }
-        if isNavigation || ctrl.Hwnd = settingsBtn.Hwnd || (IsObject(BannerPicture) && ctrl.Hwnd = BannerPicture.Hwnd)
+        if isNavigation || ctrl.Hwnd = settingsBtn.Hwnd || (IsObject(BannerPicture) && ctrl.Hwnd = BannerPicture.Hwnd) || (IsObject(UpdateLinkControl) && ctrl.Hwnd = UpdateLinkControl.Hwnd)
             continue
 
         MainPageControls.Push(ctrl)
@@ -1268,6 +1463,7 @@ BuildMainGui()
     UpdateWorkflowAccountSummary()
     UpdateWorkflowSequencePreview()
     MainGui.Show("w559 h" GetMainPageRequiredHeight())
+    ResizeMainGuiToContentHeight(GetMainPageRequiredHeight())
     ApplyGuiAlwaysOnTop(MainGui, Settings["MainAlwaysOnTop"])
     SwitchMainPage("Main")
 }
@@ -1275,25 +1471,17 @@ BuildMainGui()
 ToggleWorkflowEditorSection(*)
 {
     global WorkflowEditorExpanded, WorkflowEditorHeader, WorkflowEditorControls
-    global WorkflowBelowEditorControls, WorkflowEditorCollapseHeight, MainGui, CurrentMainPage
+    global MainGui, CurrentMainPage
 
     if !IsObject(WorkflowEditorHeader) || !WorkflowEditorHeader.Hwnd
         return
 
     SetGuiRedraw(MainGui, false)
     WorkflowEditorExpanded := !WorkflowEditorExpanded
-    direction := WorkflowEditorExpanded ? 1 : -1
+    PositionWorkflowBelowControls(WorkflowEditorExpanded)
 
     if WorkflowEditorExpanded
     {
-        for ctrl in WorkflowBelowEditorControls
-        {
-            try
-            {
-                ctrl.GetPos(&x, &y, &w, &h)
-                ctrl.Move(, y + WorkflowEditorCollapseHeight)
-            }
-        }
         for ctrl in WorkflowEditorControls
             try ctrl.Visible := CurrentMainPage = "Main"
     }
@@ -1301,21 +1489,32 @@ ToggleWorkflowEditorSection(*)
     {
         for ctrl in WorkflowEditorControls
             try ctrl.Visible := false
-        for ctrl in WorkflowBelowEditorControls
-        {
-            try
-            {
-                ctrl.GetPos(&x, &y, &w, &h)
-                ctrl.Move(, y - WorkflowEditorCollapseHeight)
-            }
-        }
     }
 
     WorkflowEditorHeader.Text := (WorkflowEditorExpanded ? "▼  " : "▶  ") "EDIT WORKFLOWS"
     if CurrentMainPage = "Main"
-        MainGui.Move(, , 559, GetMainPageRequiredHeight())
+        ResizeMainGuiToContentHeight(GetMainPageRequiredHeight())
     SetGuiRedraw(MainGui, true)
     DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
+}
+
+PositionWorkflowBelowControls(expanded)
+{
+    global WorkflowBelowEditorControls, WorkflowEditorCollapseHeight, WorkflowBelowEditorPositionExpanded
+
+    if expanded = WorkflowBelowEditorPositionExpanded
+        return
+
+    deltaY := expanded ? WorkflowEditorCollapseHeight : -WorkflowEditorCollapseHeight
+    for ctrl in WorkflowBelowEditorControls
+    {
+        try
+        {
+            ctrl.GetPos(&x, &y, &w, &h)
+            ctrl.Move(, y + deltaY)
+        }
+    }
+    WorkflowBelowEditorPositionExpanded := expanded
 }
 
 ToggleSettingsSection(*)
@@ -1333,7 +1532,7 @@ ToggleSettingsSection(*)
 
     SettingsSectionHeader.Text := (SettingsSectionExpanded ? "▼  " : "▶  ") "SETTINGS"
     if CurrentMainPage = "Main"
-        MainGui.Move(, , 559, GetMainPageRequiredHeight())
+        ResizeMainGuiToContentHeight(GetMainPageRequiredHeight())
     SetGuiRedraw(MainGui, true)
     DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
 }
@@ -1385,7 +1584,7 @@ ApplyPendingMainGuiResize(*)
         }
 
         MainVisibleTableRows := visibleRows
-        MainGui.Move(, , , GetMainPageRequiredHeight())
+        ResizeMainGuiToContentHeight(GetMainPageRequiredHeight())
     }
     finally
     {
@@ -1502,8 +1701,7 @@ MonitorFoxholeWindowPositions(*)
                 continue
 
             desired := GetLayoutSlotAbsoluteRect(slotByNumber[desiredSlotNumber])
-            try WinGetPos(&x, &y, &w, &h, "ahk_id " inst.hwnd)
-            catch
+            if !TryGetWindowRectSafe(inst.hwnd, &x, &y, &w, &h)
                 continue
 
             if Abs(x - desired.x) <= 1
@@ -1539,22 +1737,47 @@ ReapplyLayoutAfterWindowMove(*)
     MonitorFoxholeWindowPositions()
 }
 
+TryGetWindowRectSafe(hwnd, &x, &y, &w, &h)
+{
+    x := 0, y := 0, w := 0, h := 0
+    if !hwnd
+        return false
+
+    if !DllCall("IsWindow", "Ptr", hwnd, "Int")
+        return false
+
+    rect := Buffer(16, 0)
+    if !DllCall("GetWindowRect", "Ptr", hwnd, "Ptr", rect.Ptr, "Int")
+        return false
+
+    left := NumGet(rect, 0, "Int")
+    top := NumGet(rect, 4, "Int")
+    right := NumGet(rect, 8, "Int")
+    bottom := NumGet(rect, 12, "Int")
+    width := right - left
+    height := bottom - top
+    if width <= 0 || height <= 0
+        return false
+
+    if !DllCall("IsWindow", "Ptr", hwnd, "Int")
+        return false
+
+    x := left, y := top, w := width, h := height
+    return true
+}
+
 CaptureFoxholeWindowPositions()
 {
     positions := Map()
-    for hwnd in WinGetList("ahk_exe War-Win64-Shipping.exe")
-    {
-        if !IsWindowAlive(hwnd)
-            continue
+    hwnds := []
+    try hwnds := WinGetList("ahk_exe War-Win64-Shipping.exe")
+    catch
+        return positions
 
-        try
-        {
-            WinGetPos(&x, &y, &w, &h, "ahk_id " hwnd)
+    for hwnd in hwnds
+    {
+        if TryGetWindowRectSafe(hwnd, &x, &y, &w, &h)
             positions[hwnd] := {x: x, y: y, w: w, h: h}
-        }
-        catch
-        {
-        }
     }
     return positions
 }
@@ -1667,11 +1890,13 @@ RefreshLayoutEditorGui(*)
 {
     global LayoutEditorGui, LayoutEditorSlots, LayoutEditorValueCtrls, LayoutEditorSlotControls
     global LayoutEditorCombo, LayoutEditorSelectedLayout, Layouts, Instances
+    global LayoutEditorContentInitialized, LayoutEditorNeedsRefresh
 
     if !IsObject(LayoutEditorGui)
         BuildLayoutEditorGui()
 
     EnsureLastSelectedLayout()
+    ResetEmbeddedPageScroll(LayoutEditorGui)
     SetGuiRedraw(LayoutEditorGui, false)
     DestroyLayoutEditorRows()
     LayoutEditorSlots := []
@@ -1700,6 +1925,8 @@ RefreshLayoutEditorGui(*)
 
     BuildCurrentLayoutEditorRows()
     RefreshLayoutEditorLayoutList()
+    LayoutEditorContentInitialized := true
+    LayoutEditorNeedsRefresh := false
     SetGuiRedraw(LayoutEditorGui, true)
 }
 
@@ -1907,6 +2134,7 @@ RefreshLayoutEditorRowsOnly()
 {
     global LayoutEditorGui, LayoutEditorSlots, LayoutEditorValueCtrls, LayoutEditorSlotControls
 
+    ResetEmbeddedPageScroll(LayoutEditorGui)
     SetGuiRedraw(LayoutEditorGui, false)
     DestroyLayoutEditorRows()
     LayoutEditorValueCtrls := []
@@ -1931,7 +2159,7 @@ BuildCurrentLayoutEditorRows()
         toggleBtn.OnEvent("Click", MakeLayoutExpandHandler(slotIndex))
 
         monitorLabel := LayoutEditorGui.AddText("x100 y" y " w50 h24 +0x200", "Monitor:")
-        monitorCombo := LayoutEditorGui.AddComboBox("x151 y" y " w112 h24 r5", GetMonitorDisplayNames())
+        monitorCombo := LayoutEditorGui.AddDropDownList("x151 y" y " w112 r5", GetMonitorDisplayNames())
         monitorCombo.Value := ResolveLayoutMonitorNumber(slot)
         monitorCombo.OnEvent("Change", MakeLayoutMonitorHandler(slotIndex))
         aspectCheck := LayoutEditorGui.AddCheckBox("x269 y" y " w92 h24", "Keep Ratio")
@@ -1970,7 +2198,7 @@ BuildCurrentLayoutEditorRows()
         LayoutEditorSlotControls.Push(controls)
     }
 
-    LayoutEditorRequiredHeight := Max(140, y + 42)
+    LayoutEditorRequiredHeight := MeasureGuiVisibleContentHeight(LayoutEditorGui, 12, Max(140, y + 12))
     LayoutEditorGui.Move(, , 559, LayoutEditorRequiredHeight)
 }
 
@@ -2345,7 +2573,7 @@ SetLayoutSlotValue(index, prop, value)
             if ctrls.Has(field)
                 ctrls[field].Value := String(slot.%field%)
     }
-    ApplyLayoutSlotToWindow(slot)
+    ApplyLayoutSlotToWindow(slot, false)
     if LayoutEditorOverlays.Has(slot.slot)
         UpdateLayoutPreview(index)
 }
@@ -2500,6 +2728,28 @@ ResolveLayoutMonitorNumber(slot)
     monitorCount := MonitorGetCount()
     requested := HasProp(slot, "monitor") ? Integer(slot.monitor) : MonitorGetPrimary()
 
+    hasSavedMonitorPosition := HasProp(slot, "monitorLeft") && HasProp(slot, "monitorTop")
+    hasSavedMonitorPosition := hasSavedMonitorPosition && slot.monitorLeft != 2147483647
+    hasSavedMonitorPosition := hasSavedMonitorPosition && slot.monitorTop != 2147483647
+    if hasSavedMonitorPosition
+    {
+        Loop monitorCount
+        {
+            left := 0
+            top := 0
+            right := 0
+            bottom := 0
+            MonitorGet(A_Index, &left, &top, &right, &bottom)
+            if left = slot.monitorLeft && top = slot.monitorTop
+            {
+                if !HasProp(slot, "monitorWidth") || !HasProp(slot, "monitorHeight")
+                    return A_Index
+                if right - left = slot.monitorWidth && bottom - top = slot.monitorHeight
+                    return A_Index
+            }
+        }
+    }
+
     if requested >= 1 && requested <= monitorCount
     {
         if HasProp(slot, "monitorWidth") && HasProp(slot, "monitorHeight")
@@ -2569,6 +2819,8 @@ CreateDefaultLayoutSlot(slotNumber)
         monitor: primary,
         monitorWidth: right - left,
         monitorHeight: bottom - top,
+        monitorLeft: left,
+        monitorTop: top,
         x: 0,
         y: 0,
         width: 960,
@@ -2628,6 +2880,8 @@ CreateLayoutSlotFromAbsoluteRect(slotNumber, absoluteX, absoluteY, width, height
         monitor: monitorNumber,
         monitorWidth: right - left,
         monitorHeight: bottom - top,
+        monitorLeft: left,
+        monitorTop: top,
         x: absoluteX - left,
         y: absoluteY - top,
         width: width,
@@ -2641,13 +2895,22 @@ CreateLayoutSlotFromAbsoluteRect(slotNumber, absoluteX, absoluteY, width, height
 
 GetLayoutSlotAbsoluteRect(slot)
 {
-    ClampLayoutSlotToAssignedMonitor(slot)
     bounds := GetLayoutMonitorBounds(slot)
+
+    requestedWidth := Max(1, Integer(slot.width))
+    requestedHeight := Max(1, Integer(slot.height))
+
+    appliedWidth := Min(requestedWidth, Max(1, bounds.width))
+    appliedHeight := Min(requestedHeight, Max(1, bounds.height))
+
+    appliedX := Min(Max(Integer(slot.x), 0), Max(0, bounds.width - appliedWidth))
+    appliedY := Min(Max(Integer(slot.y), 0), Max(0, bounds.height - appliedHeight))
+
     return {
-        x: bounds.left + slot.x,
-        y: bounds.top + slot.y,
-        width: slot.width,
-        height: slot.height
+        x: bounds.left + appliedX,
+        y: bounds.top + appliedY,
+        width: appliedWidth,
+        height: appliedHeight
     }
 }
 
@@ -2674,6 +2937,8 @@ ChangeLayoutSlotMonitor(index, monitorNumber)
     slot.monitor := monitorNumber
     slot.monitorWidth := right - left
     slot.monitorHeight := bottom - top
+    slot.monitorLeft := left
+    slot.monitorTop := top
     ClampLayoutSlotToAssignedMonitor(slot)
 
     if LayoutEditorValueCtrls.Length >= index
@@ -2684,7 +2949,7 @@ ChangeLayoutSlotMonitor(index, monitorNumber)
                 values[field].Value := String(slot.%field%)
     }
 
-    ApplyLayoutSlotToWindow(slot)
+    ApplyLayoutSlotToWindow(slot, false)
     if LayoutEditorOverlays.Has(slot.slot)
         UpdateLayoutPreview(index)
 }
@@ -3157,7 +3422,7 @@ SortLayoutSlots(slots)
 
 SaveNewLayoutFromEditor(*)
 {
-    global LayoutEditorSlots, Layouts, LayoutEditorSelectedLayout, Settings
+    global LayoutEditorSlots, Layouts, LayoutEditorSelectedLayout, Settings, LayoutEditorNeedsRefresh
     name := InputBox("Enter a name for this layout:", "Save New Layout", "w360 h140")
     if name.Result != "OK"
         return
@@ -3175,6 +3440,7 @@ SaveNewLayoutFromEditor(*)
     }
 
     Layouts.Push({name: name, slots: CloneLayoutSlots(LayoutEditorSlots)})
+    LayoutEditorNeedsRefresh := true
     LayoutEditorSelectedLayout := Layouts.Length
     Settings["LastLayoutName"] := name
     SaveLayoutsConfig()
@@ -3195,7 +3461,7 @@ UpdateSelectedLayout(*)
 
 DeleteSelectedLayout(*)
 {
-    global Layouts, LayoutEditorSelectedLayout, Settings, LayoutFavorites
+    global Layouts, LayoutEditorSelectedLayout, Settings, LayoutFavorites, LayoutEditorNeedsRefresh
     if LayoutEditorSelectedLayout < 1 || LayoutEditorSelectedLayout > Layouts.Length
         return
     name := Layouts[LayoutEditorSelectedLayout].name
@@ -3203,6 +3469,7 @@ DeleteSelectedLayout(*)
         return
     deletedIndex := LayoutEditorSelectedLayout
     Layouts.RemoveAt(deletedIndex)
+    LayoutEditorNeedsRefresh := true
     Loop 4
     {
         if LayoutFavorites[A_Index] = deletedIndex
@@ -3218,7 +3485,7 @@ DeleteSelectedLayout(*)
 
 ApplySelectedLayout(refreshEditor := true, resetTemporarySwaps := true, *)
 {
-    global Layouts, LayoutEditorSelectedLayout, LayoutEditorSlots, LayoutTemporarySlotOverrides
+    global Layouts, LayoutEditorSelectedLayout, LayoutEditorSlots, LayoutTemporarySlotOverrides, LayoutEditorNeedsRefresh
     if LayoutEditorSelectedLayout < 1 || LayoutEditorSelectedLayout > Layouts.Length
         return false
 
@@ -3292,13 +3559,18 @@ BuildHotkeysGui()
 {
     global HotkeysGui, RebindButtons, CurrentKeys, IntervalEdits, Settings, MainGui
     global IntervalSettings, DefaultOutputKeys, CurrentOutputKeys, OutputKeyButtons, ChangeOutputKeysCheck
+    global TrainSlowHoldEdit, TrainSlowHoldDuration
     global SandboxieAccounts, AccountSwapKeys, AccountSwapButtons, AccountSwapTargetLabels
     global SwapByAccountCheck, CurrentMainPage, HotkeysExpandedSections
+    global HotkeysControlLayout, HotkeysSectionHeaders, HotkeysSectionGeometry
 
     oldGui := HotkeysGui
-    if IsObject(oldGui)
+    oldWasVisible := false
+    oldX := 0, oldY := 0
+    if IsObject(oldGui) && oldGui.Hwnd
     {
-        try oldGui.Destroy()
+        try oldWasVisible := !!DllCall("IsWindowVisible", "Ptr", oldGui.Hwnd, "Int")
+        try WinGetPos(&oldX, &oldY,,, "ahk_id " oldGui.Hwnd)
     }
 
     RebindButtons := Map()
@@ -3306,29 +3578,80 @@ BuildHotkeysGui()
     OutputKeyButtons := Map()
     AccountSwapButtons := Map()
     AccountSwapTargetLabels := Map()
+    HotkeysControlLayout := []
+    HotkeysSectionHeaders := Map()
+    HotkeysSectionGeometry := Map()
+
+    desiredStates := Map()
+    for key in ["Game", "Manage", "Swap"]
+    {
+        desiredStates[key] := HotkeysExpandedSections.Has(key) ? HotkeysExpandedSections[key] : false
+        HotkeysExpandedSections[key] := true
+    }
 
     HotkeysGui := Gui("+Parent" MainGui.Hwnd " -Caption +0x04000000", "Hotkeys")
     HotkeysGui.SetFont("s9", "Segoe UI")
     OnMessage(0x0200, HotkeysGuiMouseMove)
 
     HotkeysGui.AddText("x12 y10 w476 h22 +0x200", "HOTKEYS")
-    y := 38
-
-    y := BuildHotkeySection("Game", "GAME KEYS", ["AutoClick", "AutoWalk", "AutoReverse", "ClickHold", "RightHold", "VSpam", "TrainSlow"], y)
+    gameHeaderY := 38
+    y := BuildHotkeySection("Game", "GAME KEYS", ["AutoClick", "AutoWalk", "AutoReverse", "ClickHold", "RightHold", "VSpam", "TrainSlow"], gameHeaderY)
+    manageHeaderY := y
     y := BuildHotkeySection("Manage", "MANAGE GAMES", ["MouseFocus", "SwitchSlot", "Swap", "SwapFirst", "ShowFoxhole", "ShowSteam"], y)
+    swapHeaderY := y
     y := BuildAccountSwapSection(y)
+    fullBottomY := y
+
+    for key, state in desiredStates
+        HotkeysExpandedSections[key] := state
+
+    HotkeysSectionGeometry["Game"] := {headerY: gameHeaderY, nextY: manageHeaderY, bodyHeight: manageHeaderY - gameHeaderY - 32}
+    HotkeysSectionGeometry["Manage"] := {headerY: manageHeaderY, nextY: swapHeaderY, bodyHeight: swapHeaderY - manageHeaderY - 32}
+    HotkeysSectionGeometry["Swap"] := {headerY: swapHeaderY, nextY: fullBottomY, bodyHeight: fullBottomY - swapHeaderY - 32}
+
+    try
+    {
+        for hwnd in WinGetControlsHwnd("ahk_id " HotkeysGui.Hwnd)
+        {
+            ctrl := GuiCtrlFromHwnd(hwnd)
+            if !IsObject(ctrl)
+                continue
+            ctrl.GetPos(&cx, &cy, &cw, &ch)
+            section := ""
+            if cy >= gameHeaderY && cy < manageHeaderY
+                section := "Game"
+            else if cy >= manageHeaderY && cy < swapHeaderY
+                section := "Manage"
+            else if cy >= swapHeaderY
+                section := "Swap"
+            HotkeysControlLayout.Push({ctrl: ctrl, baseY: cy, section: section})
+        }
+    }
 
     HotkeysGui.OnEvent("Close", (*) => SwitchMainPage("Main"))
     HotkeysGui.OnEvent("Escape", (*) => SwitchMainPage("Main"))
+    RelayoutHotkeysGui()
+
+    if oldWasVisible
+    {
+        hotkeysHeight := GetHotkeysGuiRequiredHeight()
+        try HotkeysGui.Show("x" oldX " y" oldY " w500 h" Min(hotkeysHeight, GetEmbeddedPageMaxViewportHeight()) " NoActivate")
+    }
+    if IsObject(oldGui)
+        try oldGui.Destroy()
 }
+
 
 BuildHotkeySection(sectionKey, title, actions, y)
 {
     global HotkeysGui, HotkeysExpandedSections, RebindButtons, CurrentKeys, IntervalEdits, Settings
+    global HotkeysSectionHeaders
     global IntervalSettings, DefaultOutputKeys, CurrentOutputKeys, OutputKeyButtons, ChangeOutputKeysCheck
+    global TrainSlowHoldEdit, TrainSlowHoldDuration, TrainSlowDefaultHoldDuration
 
     expanded := HotkeysExpandedSections.Has(sectionKey) && HotkeysExpandedSections[sectionKey]
     header := HotkeysGui.AddButton("x12 y" y " w476 h28 +Left", (expanded ? "▼  " : "▶  ") title)
+    HotkeysSectionHeaders[sectionKey] := header
     header.OnEvent("Click", MakeHotkeysSectionToggleHandler(sectionKey))
     RegisterTooltip(header, (expanded ? "Collapse " : "Expand ") title ".")
     y += 32
@@ -3336,48 +3659,33 @@ BuildHotkeySection(sectionKey, title, actions, y)
     if !expanded
         return y
 
-    HotkeysGui.AddText("x12 y" y " w166 h18 +Center", "Hotkey / Current Binding")
-    HotkeysGui.AddText("x184 y" y " w52 h18 +Center", "Default")
-    HotkeysGui.AddText("x242 y" y " w58 h18 +Center", "Unbind")
-    HotkeysGui.AddText("x306 y" y " w62 h18 +Center", "Output")
-    HotkeysGui.AddText("x374 y" y " w114 h18 +Center", "Interval")
+    HotkeysGui.AddText("x12 y" y " w220 h18 +Center", "Hotkey / Current Binding")
+    HotkeysGui.AddText("x238 y" y " w60 h18 +Center", "Default")
+    HotkeysGui.AddText("x304 y" y " w64 h18 +Center", "Unbind")
+    HotkeysGui.AddText("x374 y" y " w114 h18 +Center", "Output")
     y += 21
 
     for action in actions
     {
-        RebindButtons[action] := HotkeysGui.AddButton("x12 y" y " w166 h28", ActionButtonText(action, CurrentKeys[action]))
+        RebindButtons[action] := HotkeysGui.AddButton("x12 y" y " w220 h28", ActionButtonText(action, CurrentKeys[action]))
         RebindButtons[action].OnEvent("Click", MakeHotkeysRebindHandler(action))
         RegisterTooltip(RebindButtons[action], HotkeyActionTooltip.Bind(action))
 
-        resetBtn := HotkeysGui.AddButton("x184 y" y " w52 h28", "Reset")
+        resetBtn := HotkeysGui.AddButton("x238 y" y " w60 h28", "Reset")
         resetBtn.OnEvent("Click", MakeActionClickHandler(ResetSingleHotkey, action))
         RegisterTooltip(resetBtn, HotkeyResetTooltip.Bind(action))
 
-        unbindBtn := HotkeysGui.AddButton("x242 y" y " w58 h28", "Unbind")
+        unbindBtn := HotkeysGui.AddButton("x304 y" y " w64 h28", "Unbind")
         unbindBtn.OnEvent("Click", MakeActionClickHandler(UnbindSingleHotkey, action))
         RegisterTooltip(unbindBtn, MakeUnbindTooltipProvider(action))
 
         if DefaultOutputKeys.Has(action)
         {
-            outputBtn := HotkeysGui.AddButton("x306 y" y " w62 h28", DisplayNameForOutputKey(CurrentOutputKeys[action]))
+            outputBtn := HotkeysGui.AddButton("x374 y" y " w114 h28", DisplayNameForOutputKey(CurrentOutputKeys[action]))
             outputBtn.OnEvent("Click", MakeOutputKeyHandler(action))
             outputBtn.Visible := Settings["ChangeOutputKeys"]
             OutputKeyButtons[action] := outputBtn
             RegisterTooltip(outputBtn, "Choose the keyboard key this action sends to Foxhole. Useful for AZERTY and other keyboard layouts.")
-        }
-        else
-            HotkeysGui.AddText("x306 y" (y + 5) " w62 h20 +Center", "—")
-
-        if IntervalSettings.Has(action)
-        {
-            settingName := IntervalSettings[action]
-            IntervalEdits[action] := HotkeysGui.AddEdit("x374 y" (y + 2) " w42 h24 Number", String(Settings[settingName]))
-            IntervalEdits[action].OnEvent("LoseFocus", MakeActionControlHandler(SaveHotkeyInterval, action))
-            RegisterTooltip(IntervalEdits[action], IntervalTooltip.Bind(action))
-            HotkeysGui.AddText("x420 y" (y + 5) " w20 h20", "ms")
-            resetIntervalBtn := HotkeysGui.AddButton("x442 y" y " w46 h28", "Reset")
-            resetIntervalBtn.OnEvent("Click", MakeActionClickHandler(ResetHotkeyInterval, action))
-            RegisterTooltip(resetIntervalBtn, IntervalTooltip.Bind(action, true))
         }
         else
             HotkeysGui.AddText("x374 y" (y + 5) " w114 h20 +Center", "—")
@@ -3392,6 +3700,7 @@ BuildHotkeySection(sectionKey, title, actions, y)
         ChangeOutputKeysCheck.OnEvent("Click", ToggleChangeOutputKeys)
         RegisterTooltip(ChangeOutputKeysCheck, "Show or hide controls for changing the keys sent to Foxhole. This does not change the activation hotkeys.")
         y += 30
+
     }
 
     return y + 4
@@ -3400,10 +3709,12 @@ BuildHotkeySection(sectionKey, title, actions, y)
 BuildAccountSwapSection(y)
 {
     global HotkeysGui, HotkeysExpandedSections, SandboxieAccounts, AccountSwapKeys
+    global HotkeysSectionHeaders
     global AccountSwapButtons, AccountSwapTargetLabels, SwapByAccountCheck, Settings
 
     expanded := HotkeysExpandedSections.Has("Swap") && HotkeysExpandedSections["Swap"]
     header := HotkeysGui.AddButton("x12 y" y " w476 h28 +Left", (expanded ? "▼  " : "▶  ") "SWAP TO ACCOUNT")
+    HotkeysSectionHeaders["Swap"] := header
     header.OnEvent("Click", MakeHotkeysSectionToggleHandler("Swap"))
     RegisterTooltip(header, (expanded ? "Collapse" : "Expand") " the generated Swap to N hotkeys.")
     y += 32
@@ -3454,6 +3765,61 @@ BuildAccountSwapSection(y)
     return y + 34
 }
 
+RelayoutHotkeysGui()
+{
+    global HotkeysGui, HotkeysExpandedSections, HotkeysControlLayout, HotkeysSectionHeaders, HotkeysSectionGeometry
+
+    if !IsObject(HotkeysGui) || !HotkeysGui.Hwnd || HotkeysControlLayout.Length = 0
+        return
+
+    ResetEmbeddedPageScroll(HotkeysGui)
+
+    gameShift := (!HotkeysExpandedSections["Game"]) ? HotkeysSectionGeometry["Game"].bodyHeight : 0
+    manageShift := (!HotkeysExpandedSections["Manage"]) ? HotkeysSectionGeometry["Manage"].bodyHeight : 0
+
+    SetGuiRedraw(HotkeysGui, false)
+    try
+    {
+        for record in HotkeysControlLayout
+        {
+            ctrl := record.ctrl
+            if !IsObject(ctrl) || !ctrl.Hwnd
+                continue
+            section := record.section
+            if section = ""
+                continue
+
+            isHeader := HotkeysSectionHeaders.Has(section) && ctrl.Hwnd = HotkeysSectionHeaders[section].Hwnd
+            if !isHeader
+                ctrl.Visible := HotkeysExpandedSections[section]
+            else
+                ctrl.Visible := true
+
+            shift := 0
+            if section = "Manage"
+                shift := gameShift
+            else if section = "Swap"
+                shift := gameShift + manageShift
+            ctrl.Move(, record.baseY - shift)
+        }
+
+        for key, header in HotkeysSectionHeaders
+        {
+            prefix := HotkeysExpandedSections[key] ? "▼  " : "▶  "
+            if key = "Game"
+                header.Text := prefix "GAME KEYS"
+            else if key = "Manage"
+                header.Text := prefix "MANAGE GAMES"
+            else
+                header.Text := prefix "SWAP TO ACCOUNT"
+        }
+    }
+    finally
+    {
+        SetGuiRedraw(HotkeysGui, true)
+    }
+}
+
 MakeHotkeysSectionToggleHandler(sectionKey)
 {
     return (*) => ToggleHotkeysSection(sectionKey)
@@ -3461,13 +3827,15 @@ MakeHotkeysSectionToggleHandler(sectionKey)
 
 ToggleHotkeysSection(sectionKey)
 {
-    global HotkeysExpandedSections, CurrentMainPage
+    global HotkeysExpandedSections, CurrentMainPage, MainGui, HotkeysGui
     current := HotkeysExpandedSections.Has(sectionKey) ? HotkeysExpandedSections[sectionKey] : false
     HotkeysExpandedSections[sectionKey] := !current
-    BuildHotkeysGui()
+
+    RelayoutHotkeysGui()
     if CurrentMainPage = "Hotkeys"
-        SwitchMainPage("Hotkeys")
+        FitEmbeddedPageToContent(HotkeysGui, 12, 500, 140, false)
 }
+
 
 GetNamedAccountHotkeyCount()
 {
@@ -3481,26 +3849,16 @@ GetNamedAccountHotkeyCount()
 
 GetHotkeysGuiRequiredHeight()
 {
-    global HotkeysExpandedSections
-    height := 38
-    height += 32
-    if HotkeysExpandedSections.Has("Game") && HotkeysExpandedSections["Game"]
-        height += 21 + (7 * 34) + 34
-    height += 32
-    if HotkeysExpandedSections.Has("Manage") && HotkeysExpandedSections["Manage"]
-        height += 21 + (6 * 34) + 4
-    height += 32
-    if HotkeysExpandedSections.Has("Swap") && HotkeysExpandedSections["Swap"]
-        height += 23 + 21 + (GetNamedAccountHotkeyCount() * 34) + 34
-    return height + 8
+    global HotkeysGui
+    return MeasureGuiVisibleContentHeight(HotkeysGui, 8, 140)
 }
 
 RefreshAccountSwapHotkeysGui()
 {
-    global CurrentMainPage
+    global CurrentMainPage, MainGui, HotkeysGui
     BuildHotkeysGui()
     if CurrentMainPage = "Hotkeys"
-        SwitchMainPage("Hotkeys")
+        FitEmbeddedPageToContent(HotkeysGui, 12, 500, 140, true)
 }
 
 UpdateAccountSwapTargetLabels()
@@ -3599,6 +3957,7 @@ ApplySandboxieRowCount(*)
 
     StopSandboxieStatusWatcher()
     SBGui.Hide()
+    ClearGuiTooltipsForGui(SBGui)
     SBGui.Destroy()
     SBGui := ""
     SandboxieRows := []
@@ -3915,13 +4274,18 @@ GetSandboxieBoxPids(boxName)
 
 BeginSandboxieSteamMinimizeWatch(boxName)
 {
-    global SandboxieSteamMinimizeBoxes
+    global SandboxieSteamMinimizeBoxes, CertifiedSandboxieSteamBoxes
     if !IsValidSandboxieName(boxName)
         return
+    if CertifiedSandboxieSteamBoxes.Has(boxName)
+        CertifiedSandboxieSteamBoxes.Delete(boxName)
 
-    SandboxieSteamMinimizeBoxes[boxName] := A_TickCount + 30000
-    if MinimizeSandboxieSteamWindowsForBox(boxName)
-        SandboxieSteamMinimizeBoxes.Delete(boxName)
+    SandboxieSteamMinimizeBoxes[boxName] := {
+        deadline: A_TickCount + 900000,
+        readiness: { signature: "", stableSince: 0, ready: false },
+        closeSent: false
+    }
+    HandleSandboxieSteamWindowsForBox(boxName, SandboxieSteamMinimizeBoxes[boxName])
 }
 
 MinimizeLaunchedSandboxieSteamWindows(*)
@@ -3931,15 +4295,26 @@ MinimizeLaunchedSandboxieSteamWindows(*)
         return
 
     finished := []
-    for boxName, deadline in SandboxieSteamMinimizeBoxes
+    for boxName, state in SandboxieSteamMinimizeBoxes
     {
-        if A_TickCount > deadline
+        if !IsObject(state) || !state.HasOwnProp("readiness")
+        {
+            state := {
+                deadline: A_TickCount + 900000,
+                readiness: { signature: "", stableSince: 0, ready: false },
+                closeSent: false
+            }
+            SandboxieSteamMinimizeBoxes[boxName] := state
+        }
+
+        if A_TickCount > state.deadline || state.closeSent
         {
             finished.Push(boxName)
             continue
         }
 
-        if MinimizeSandboxieSteamWindowsForBox(boxName)
+        HandleSandboxieSteamWindowsForBox(boxName, state)
+        if state.closeSent
             finished.Push(boxName)
     }
 
@@ -3950,46 +4325,162 @@ MinimizeLaunchedSandboxieSteamWindows(*)
     }
 }
 
-MinimizeSandboxieSteamWindowsForBox(boxName)
+GetSandboxieSteamReadinessSnapshot(boxName)
 {
+    steamCount := 0
+    helperCount := 0
+    pidSum := 0
+    normalSteamWindow := 0
+    blockingWindow := false
+    steamWindows := []
 
-    closedStartupWindow := false
-
-    for pid in GetSandboxieBoxPids(boxName)
+    oldDetectHidden := A_DetectHiddenWindows
+    DetectHiddenWindows(true)
+    try
     {
-        processName := ""
-        try processName := StrLower(ProcessGetName(pid))
-        catch
-            continue
-
-        if processName != "steam.exe" && processName != "steamwebhelper.exe"
-            continue
-
-        try windows := WinGetList("ahk_pid " pid)
-        catch
-            continue
-
-        for hwnd in windows
+        for pid in GetSandboxieBoxPids(boxName)
         {
-            try
+            processName := ""
+            try processName := StrLower(ProcessGetName(pid))
+            catch
+                continue
+
+            if processName != "steam.exe" && processName != "steamwebhelper.exe"
+                continue
+
+            pidSum += pid
+            if processName = "steam.exe"
+                steamCount++
+            else
+                helperCount++
+
+            try windows := WinGetList("ahk_pid " pid)
+            catch
+                continue
+
+            for hwnd in windows
             {
+                try
+                {
+                    if !WinExist("ahk_id " hwnd) || !WinGetStyle("ahk_id " hwnd)
+                        continue
 
-                if !WinExist("ahk_id " hwnd) || !WinGetStyle("ahk_id " hwnd)
-                    continue
-                if !(WinGetStyle("ahk_id " hwnd) & 0x10000000)
-                    continue
+                    title := Trim(WinGetTitle("ahk_id " hwnd))
+                    titleLower := StrLower(title)
+                    WinGetPos(,, &windowWidth, &windowHeight, "ahk_id " hwnd)
+                    if windowWidth < 200 || windowHeight < 120
+                        continue
 
-                WinGetPos(,, &windowWidth, &windowHeight, "ahk_id " hwnd)
-                if windowWidth < 200 || windowHeight < 120
-                    continue
+                    steamWindows.Push({ hwnd: hwnd, processName: processName, title: title })
 
-                WinClose("ahk_id " hwnd)
-                closedStartupWindow := true
+                    if InStr(titleLower, "verify") || InStr(titleLower, "install")
+                        || InStr(titleLower, "updating steam") || InStr(titleLower, "steam update")
+                        || InStr(titleLower, "connecting steam account") || InStr(titleLower, "signing in")
+                    {
+                        blockingWindow := true
+                        continue
+                    }
+
+                    if processName = "steam.exe"
+                        normalSteamWindow := hwnd
+                }
             }
         }
     }
+    finally
+    {
+        DetectHiddenWindows(oldDetectHidden)
+    }
 
-    return closedStartupWindow
+    signature := steamCount "|" helperCount "|" pidSum "|" normalSteamWindow "|" (blockingWindow ? 1 : 0)
+    structurallyReady := steamCount >= 1 && helperCount >= 2 && normalSteamWindow && !blockingWindow
+    return {
+        ready: structurallyReady,
+        signature: signature,
+        steamCount: steamCount,
+        helperCount: helperCount,
+        normalSteamWindow: normalSteamWindow,
+        blockingWindow: blockingWindow,
+        windows: steamWindows
+    }
+}
+
+UpdateSandboxieSteamReadiness(boxName, state, requiredStableMs := 20000, snapshot := "")
+{
+    global CertifiedSandboxieSteamBoxes
+    if !IsObject(snapshot)
+        snapshot := GetSandboxieSteamReadinessSnapshot(boxName)
+    now := A_TickCount
+
+    if CertifiedSandboxieSteamBoxes.Has(boxName)
+    {
+        if snapshot.steamCount >= 1 && snapshot.helperCount >= 2 && !snapshot.blockingWindow
+        {
+            state.ready := true
+            return true
+        }
+        CertifiedSandboxieSteamBoxes.Delete(boxName)
+    }
+
+    if !snapshot.ready
+    {
+        state.signature := ""
+        state.stableSince := 0
+        state.ready := false
+        return false
+    }
+
+    if state.signature != snapshot.signature
+    {
+        state.signature := snapshot.signature
+        state.stableSince := now
+        state.ready := false
+        return false
+    }
+
+    if !state.stableSince
+        state.stableSince := now
+
+    state.ready := now - state.stableSince >= requiredStableMs
+    if state.ready
+        CertifiedSandboxieSteamBoxes[boxName] := now
+    return state.ready
+}
+
+HandleSandboxieSteamWindowsForBox(boxName, state)
+{
+    snapshot := GetSandboxieSteamReadinessSnapshot(boxName)
+
+    for window in snapshot.windows
+    {
+        try WinMinimize("ahk_id " window.hwnd)
+    }
+
+    if !UpdateSandboxieSteamReadiness(boxName, state.readiness, 20000, snapshot)
+        return
+
+    snapshot := GetSandboxieSteamReadinessSnapshot(boxName)
+    if !snapshot.ready || !snapshot.normalSteamWindow
+        return
+
+    try
+    {
+        PostMessage(0x0010, 0, 0, , "ahk_id " snapshot.normalSteamWindow)
+        state.closeSent := true
+    }
+}
+
+MinimizeSandboxieSteamWindowsForBox(boxName)
+{
+    global SandboxieSteamMinimizeBoxes
+    if SandboxieSteamMinimizeBoxes.Has(boxName)
+        state := SandboxieSteamMinimizeBoxes[boxName]
+    else
+        state := { deadline: A_TickCount + 900000, readiness: { signature: "", stableSince: 0, ready: false }, closeSent: false }
+    if !IsObject(state) || !state.HasOwnProp("readiness")
+        state := { deadline: A_TickCount + 900000, readiness: { signature: "", stableSince: 0, ready: false }, closeSent: false }
+    HandleSandboxieSteamWindowsForBox(boxName, state)
+    return true
 }
 
 MakeSandboxieCredentialHandler(index)
@@ -4535,8 +5026,6 @@ StartSelectedSandboxieSteamLaunches(accountIndices := "", minimizeSteam := true,
             try
             {
                 Run(command)
-                if minimizeSteam
-                    BeginSandboxieSteamMinimizeWatch(accountName)
                 launched++
             }
             catch as e
@@ -4611,15 +5100,14 @@ IsUnsandboxedProcessRunning(processName)
     return false
 }
 
-IsCombinedSteamAccountReady(item)
+IsCombinedSteamAccountReady(item, state := "")
 {
-    global CombinedSteamPaths
-
     if item.main
         return IsUnsandboxedProcessRunning("steam.exe") && IsUnsandboxedProcessRunning("steamwebhelper.exe")
 
-    running := GetSandboxieProcessNames(item.name)
-    return IsObject(running) && running.Has("steam.exe") && running.Has("steamwebhelper.exe")
+    if !IsObject(state)
+        return false
+    return UpdateSandboxieSteamReadiness(item.name, state, 20000)
 }
 
 AbortCombinedSteamFoxholeLaunch(message, showPopup := true)
@@ -4765,8 +5253,6 @@ StartCombinedSteamFoxholeLaunch(accountIndices := "", minimizeSteam := true, *)
                 password := GetSteamCredentialPassword(item.name)
                 command := QuoteWindowsCommandLineArg(paths.sandman) " /box:" item.name " " QuoteWindowsCommandLineArg(paths.steamExe) " -silent -nochatui -nofriendsui -login " QuoteWindowsCommandLineArg(username) " " QuoteWindowsCommandLineArg(password)
                 Run(command)
-                if minimizeSteam
-                    BeginSandboxieSteamMinimizeWatch(item.name)
                 password := ""
                 command := ""
             }
@@ -4802,7 +5288,7 @@ CheckCombinedSteamReadiness(*)
         notReady := []
         for item in CombinedLaunchAccounts
         {
-            if !CombinedSteamReadyPolls.Has(item.index) || CombinedSteamReadyPolls[item.index] < 8
+            if !CombinedSteamReadyPolls.Has(item.index) || !CombinedSteamReadyPolls[item.index].ready
                 notReady.Push({ name: item.name })
         }
         AbortCombinedSteamFoxholeLaunch("Steam did not fully load before the timeout for:`n" JoinSteamLaunchAccountNames(notReady))
@@ -4812,13 +5298,21 @@ CheckCombinedSteamReadiness(*)
     readyCount := 0
     for item in CombinedLaunchAccounts
     {
-        polls := CombinedSteamReadyPolls.Has(item.index) ? CombinedSteamReadyPolls[item.index] : 0
-        if IsCombinedSteamAccountReady(item)
-            polls++
+        if !CombinedSteamReadyPolls.Has(item.index)
+            CombinedSteamReadyPolls[item.index] := { signature: "", stableSince: 0, ready: false }
+        state := CombinedSteamReadyPolls[item.index]
+
+        if item.main
+        {
+            if IsCombinedSteamAccountReady(item, state)
+                state.ready := true
+            else
+                state.ready := false
+        }
         else
-            polls := 0
-        CombinedSteamReadyPolls[item.index] := polls
-        if polls >= 8
+            IsCombinedSteamAccountReady(item, state)
+
+        if state.ready
             readyCount++
     }
 
@@ -5336,10 +5830,9 @@ LaunchSandboxieSteam(index)
     try
     {
         Run(command)
-        BeginSandboxieSteamMinimizeWatch(accountName)
         password := ""
         command := ""
-        StatusText.Text := "Status: Steam launched to tray in sandbox " accountName "."
+        StatusText.Text := "Status: Steam launched in sandbox " accountName "."
     }
     catch as e
     {
@@ -5856,8 +6349,6 @@ FinishSequentialFoxholeLaunches(skipped := 0)
     if SequentialLoginActive
     {
         SequentialLoginRefillPending := false
-        ; Keep the monitor periodic after each completed launch. A negative period
-        ; turns it into a one-shot timer and caused refills to stop after startup.
         SetTimer(MonitorSequentialLoginWorkflow, 750)
         UpdateSequentialLoginStatus()
         return
@@ -6011,8 +6502,13 @@ ScanWindows(*)
             inst.width := w
             inst.height := h
             inst.clickInterval := LoadAccountInterval(slot, "AutoClick", Settings["ClickInterval"])
-            inst.trainSlowInterval := LoadAccountInterval(slot, "TrainSlow", Settings["TrainSlowInterval"])
+            inst.trainSlowInterval := Settings["TrainSlowInterval"]
             inst.autoClickPaused := false
+            inst.trainSlowHolding := false
+            if !HasProp(inst, "trainSlowPulseId")
+                inst.trainSlowPulseId := 0
+            else
+                inst.trainSlowPulseId += 1
             inst.borderless := false
             inst.originalStyle := 0
             ApplyBorderless(inst, true)
@@ -6031,7 +6527,7 @@ ScanWindows(*)
                 clickX: Settings["DefaultClickX"],
                 clickY: Settings["DefaultClickY"],
                 clickInterval: LoadAccountInterval(slot, "AutoClick", Settings["ClickInterval"]),
-                trainSlowInterval: LoadAccountInterval(slot, "TrainSlow", Settings["TrainSlowInterval"]),
+                trainSlowInterval: Settings["TrainSlowInterval"],
                 autoClickPaused: false,
                 autoClick: false,
                 autoWalk: false,
@@ -6040,6 +6536,8 @@ ScanWindows(*)
                 rightHold: false,
                 vSpam: false,
                 trainSlow: false,
+                trainSlowHolding: false,
+                trainSlowPulseId: 0,
                 borderless: false,
                 originalStyle: 0,
                 timers: Map()
@@ -6181,7 +6679,7 @@ FindInstanceByHwnd(hwnd)
 
 IsWindowAlive(hwnd)
 {
-    return hwnd && WinExist("ahk_id " hwnd)
+    return hwnd && DllCall("IsWindow", "Ptr", hwnd, "Int")
 }
 
 EnsureUniqueInstanceSlots()
@@ -7249,6 +7747,14 @@ ApplyBorderless(inst, borderless)
         return false
 
     hwnd := inst.hwnd
+
+    hadRect := false
+    try
+    {
+        WinGetPos(&preserveX, &preserveY, &preserveW, &preserveH, "ahk_id " hwnd)
+        hadRect := preserveW > 0 && preserveH > 0
+    }
+
     if borderless
     {
         if !inst.HasOwnProp("borderless")
@@ -7278,6 +7784,19 @@ ApplyBorderless(inst, borderless)
             WinSetStyle(0x10CF0000, "ahk_id " hwnd)
         RefreshFrame(hwnd)
         inst.borderless := false
+    }
+
+    if hadRect && IsWindowAlive(hwnd)
+    {
+        try
+        {
+            WinMove(preserveX, preserveY, preserveW, preserveH, "ahk_id " hwnd)
+            WinGetPos(&actualX, &actualY, &actualW, &actualH, "ahk_id " hwnd)
+            inst.x := actualX
+            inst.y := actualY
+            inst.width := actualW
+            inst.height := actualH
+        }
     }
     return true
 }
@@ -7328,7 +7847,11 @@ CreateTitleOverlay(inst, forceCreate := false)
         text: text,
         targetHwnd: inst.hwnd,
         targetPid: targetPid,
-        overlayHwnd: overlay.Hwnd
+        overlayHwnd: overlay.Hwnd,
+        lastTitle: "",
+        lastX: -2147483648,
+        lastY: -2147483648,
+        lastW: -1
     }
 }
 
@@ -7409,15 +7932,30 @@ UpdateTitleOverlay(inst)
             accountName := GetAccountNameForInstance(inst)
             title := "War " inst.slot " - " accountName
         }
-        overlay.text.Text := title
+        if overlay.lastTitle != title
+        {
+            overlay.text.Text := title
+            overlay.lastTitle := title
+        }
 
-        WinGetPos(&x, &y, &w, &h, "ahk_id " inst.hwnd)
+        if !TryGetWindowRectSafe(inst.hwnd, &x, &y, &w, &h)
+        {
+            RemoveTitleOverlay(inst.hwnd)
+            return
+        }
         oldOverlayW := Min(500, Max(180, w - 20))
         overlayW := Max(100, Round(oldOverlayW * 0.40))
-        overlayH := 30
-        overlay.text.Move(6, 3, overlayW - 12, 24)
-        overlay.gui.Show("NA x" (x + 50) " y" (y + 8) " w" overlayW " h" overlayH)
-        try WinSetTransparent(200, "ahk_id " . overlay.gui.Hwnd)
+        overlayX := x + 50
+        overlayY := y + 8
+        if overlay.lastX != overlayX || overlay.lastY != overlayY || overlay.lastW != overlayW
+        {
+            if overlay.lastW != overlayW
+                overlay.text.Move(6, 3, overlayW - 12, 24)
+            overlay.gui.Show("NA x" overlayX " y" overlayY " w" overlayW " h30")
+            overlay.lastX := overlayX
+            overlay.lastY := overlayY
+            overlay.lastW := overlayW
+        }
     }
     catch
     {
@@ -7496,8 +8034,8 @@ RebuildAllTitleOverlays()
 
 MaintainTitleOverlays(*)
 {
-    global SequentialLaunchActive
-    if SequentialLaunchActive
+    global SequentialLaunchActive, UiTransitionInProgress
+    if SequentialLaunchActive || UiTransitionInProgress
         return
     UpdateAllTitleOverlays()
 }
@@ -7622,6 +8160,8 @@ ToggleAction(inst, action)
 
 StartAction(inst, action)
 {
+    global CurrentOutputKeys
+
     if !IsWindowAlive(inst.hwnd)
         return
 
@@ -7647,15 +8187,24 @@ StartAction(inst, action)
 
         case "ClickHold":
             SendBackgroundHold(inst)
+            SetInstanceTimer(inst, "ClickHold", (*) => SendBackgroundHold(inst), 50)
+            RestoreGameCursorToPhysicalPositionForInstance(inst)
 
         case "RightHold":
             SendBackgroundRightHold(inst)
+            SetInstanceTimer(inst, "RightHold", (*) => SendBackgroundRightHold(inst), 200)
 
         case "VSpam":
             SendBackgroundV(inst)
             SetInstanceTimer(inst, "VSpam", (*) => SendBackgroundV(inst), 50)
 
         case "TrainSlow":
+            RemoveInstanceTimer(inst, "TrainSlowRelease")
+            if !HasProp(inst, "trainSlowPulseId")
+                inst.trainSlowPulseId := 0
+            inst.trainSlowPulseId += 1
+            inst.trainSlowHolding := false
+            PostBackgroundKeyUpForInstance(inst, CurrentOutputKeys["TrainSlow"])
             SendBackgroundTrainSlow(inst)
             SetInstanceTimer(inst, "TrainSlow", (*) => SendBackgroundTrainSlow(inst), inst.trainSlowInterval)
     }
@@ -7702,7 +8251,12 @@ StopAction(inst, action)
                 PostBackgroundKeyUpForInstance(inst, CurrentOutputKeys["VSpam"])
 
         case "TrainSlow":
+            RemoveInstanceTimer(inst, "TrainSlowRelease")
+            if !HasProp(inst, "trainSlowPulseId")
+                inst.trainSlowPulseId := 0
+            inst.trainSlowPulseId += 1
             inst.trainSlow := false
+            inst.trainSlowHolding := false
             if alive
                 PostBackgroundKeyUpForInstance(inst, CurrentOutputKeys["TrainSlow"])
     }
@@ -7794,8 +8348,7 @@ PostBackgroundKeyDownForInstance(inst, keyName)
     if !IsWindowAlive(inst.hwnd) || !IsValidOutputKey(keyName)
         return false
     vk := GetKeyVK(keyName), sc := GetKeySC(keyName)
-    for targetHwnd in GetHotkeysTargets(inst.hwnd)
-        PostMessage(0x0100, vk, BuildKeyboardLParam(sc, false, IsExtendedOutputKey(keyName)), , "ahk_id " targetHwnd)
+    PostMessage(0x0100, vk, BuildKeyboardLParam(sc, false, IsExtendedOutputKey(keyName)), , "ahk_id " inst.hwnd)
     return true
 }
 
@@ -7804,8 +8357,7 @@ PostBackgroundKeyUpForInstance(inst, keyName)
     if !IsWindowAlive(inst.hwnd) || !IsValidOutputKey(keyName)
         return false
     vk := GetKeyVK(keyName), sc := GetKeySC(keyName)
-    for targetHwnd in GetHotkeysTargets(inst.hwnd)
-        PostMessage(0x0101, vk, BuildKeyboardLParam(sc, true, IsExtendedOutputKey(keyName)), , "ahk_id " targetHwnd)
+    PostMessage(0x0101, vk, BuildKeyboardLParam(sc, true, IsExtendedOutputKey(keyName)), , "ahk_id " inst.hwnd)
     return true
 }
 
@@ -7823,14 +8375,19 @@ SendBackgroundS(inst)
 
 SendBackgroundHold(inst)
 {
-    if !IsWindowAlive(inst.hwnd)
+    if !IsWindowAlive(inst.hwnd) || !inst.clickHold
         return
     lp := MakeLParam(inst.clickX, inst.clickY)
+    PostMessage(0x0201, 0x0001, lp, , "ahk_id " inst.hwnd)
+}
+
+RestoreGameCursorToPhysicalPositionForInstance(inst)
+{
+    if !IsWindowAlive(inst.hwnd)
+        return
     restoreLp := GetCurrentCursorClientLParam(inst.hwnd)
-    target := "ahk_id " inst.hwnd
-    PostMessage(0x0201, 0x0001, lp, , target)
     if restoreLp != ""
-        PostMessage(0x0200, 0, restoreLp, , target)
+        PostMessage(0x0200, 0, restoreLp, , "ahk_id " inst.hwnd)
 }
 
 SendBackgroundRightHold(inst)
@@ -7878,11 +8435,35 @@ SendBackgroundTrainSlow(inst)
     global CurrentOutputKeys, TrainSlowHoldDuration
     if !IsWindowAlive(inst.hwnd) || !inst.trainSlow
         return
+
+    if HasProp(inst, "trainSlowHolding") && inst.trainSlowHolding
+        return
+
+    if !HasProp(inst, "trainSlowPulseId")
+        inst.trainSlowPulseId := 0
+    inst.trainSlowPulseId += 1
+    pulseId := inst.trainSlowPulseId
+
     if PostBackgroundKeyDownForInstance(inst, CurrentOutputKeys["TrainSlow"])
     {
-        release := (*) => PostBackgroundKeyUpForInstance(inst, CurrentOutputKeys["TrainSlow"])
-        SetTimer(release, -TrainSlowHoldDuration)
+        inst.trainSlowHolding := true
+        release := (*) => ReleaseBackgroundTrainSlow(inst, pulseId)
+        SetInstanceTimer(inst, "TrainSlowRelease", release, -TrainSlowHoldDuration)
     }
+}
+
+ReleaseBackgroundTrainSlow(inst, pulseId := 0)
+{
+    global CurrentOutputKeys
+
+    if pulseId && HasProp(inst, "trainSlowPulseId") && pulseId != inst.trainSlowPulseId
+        return
+
+    if IsWindowAlive(inst.hwnd)
+        PostBackgroundKeyUpForInstance(inst, CurrentOutputKeys["TrainSlow"])
+    inst.trainSlowHolding := false
+    if inst.timers.Has("TrainSlowRelease")
+        inst.timers.Delete("TrainSlowRelease")
 }
 
 GetFocusedActionInstance(action)
@@ -7906,8 +8487,12 @@ IsFocusedTrainSlowActive()
 }
 
 #HotIf IsFocusedTrainSlowActive()
-+WheelUp::AdjustFocusedTrainSlowInterval(25)
-+WheelDown::AdjustFocusedTrainSlowInterval(-25)
++WheelUp::AdjustFocusedTrainSlowInterval(50)
++WheelDown::AdjustFocusedTrainSlowInterval(-50)
+!WheelUp::AdjustTrainSlowHoldDurationForAll(50)
+!WheelDown::AdjustTrainSlowHoldDurationForAll(-50)
+^WheelUp::AdjustTrainSlowHoldDurationForAll(50)
+^WheelDown::AdjustTrainSlowHoldDurationForAll(-50)
 #HotIf
 
 #HotIf IsFocusedAutoClickActive()
@@ -7950,13 +8535,79 @@ AdjustFocusedAutoClickInterval(change)
 
 AdjustFocusedTrainSlowInterval(change)
 {
-    inst := GetFocusedActionInstance("TrainSlow")
-    if !IsObject(inst)
+    global Settings
+    if !IsObject(GetFocusedActionInstance("TrainSlow"))
         return
-    inst.trainSlowInterval := Max(10, Min(3000, inst.trainSlowInterval + change))
-    SaveAccountInterval(inst.slot, "TrainSlow", inst.trainSlowInterval)
-    SetInstanceTimer(inst, "TrainSlow", (*) => SendBackgroundTrainSlow(inst), inst.trainSlowInterval)
-    ShowHotkeyTooltip("Train Slow interval: " inst.trainSlowInterval " ms")
+
+    interval := Max(10, Min(5000, Settings["TrainSlowInterval"] + change))
+    ApplyTrainSlowIntervalToAll(interval, true)
+    ShowHotkeyTooltip("Train Slow interval (all accounts): " interval " ms")
+}
+
+ApplyTrainSlowIntervalToAll(interval, persist := true)
+{
+    global Settings, Instances, IntervalEdits, CONFIG_FILE
+    interval := Max(10, Min(5000, Integer(interval)))
+    Settings["TrainSlowInterval"] := interval
+    if IntervalEdits.Has("TrainSlow")
+        IntervalEdits["TrainSlow"].Value := String(interval)
+
+    for inst in Instances
+    {
+        inst.trainSlowInterval := interval
+        if inst.trainSlow && IsWindowAlive(inst.hwnd)
+        {
+            if inst.timers.Has("TrainSlow")
+            {
+                try SetTimer(inst.timers["TrainSlow"], interval)
+            }
+            else
+            {
+                SetInstanceTimer(inst, "TrainSlow", (*) => SendBackgroundTrainSlow(inst), interval)
+            }
+        }
+    }
+
+    if persist
+        IniWrite(interval, CONFIG_FILE, "Settings", "TrainSlowInterval")
+}
+
+AdjustTrainSlowHoldDurationForAll(change)
+{
+    global TrainSlowHoldDuration
+    SetTrainSlowHoldDuration(TrainSlowHoldDuration + change, true)
+    ShowHotkeyTooltip("Train Slow hold duration (all accounts): " TrainSlowHoldDuration " ms")
+}
+
+SetTrainSlowHoldDuration(duration, persist := true)
+{
+    global TrainSlowHoldDuration, TrainSlowHoldEdit, Settings, CONFIG_FILE
+    TrainSlowHoldDuration := Max(10, Min(5000, Integer(duration)))
+    Settings["TrainSlowHoldDuration"] := TrainSlowHoldDuration
+    if IsObject(TrainSlowHoldEdit)
+        try TrainSlowHoldEdit.Value := String(TrainSlowHoldDuration)
+    if persist
+        IniWrite(TrainSlowHoldDuration, CONFIG_FILE, "Settings", "TrainSlowHoldDuration")
+}
+
+SaveTrainSlowHoldDurationFromGui(ctrl, *)
+{
+    global TrainSlowHoldDuration, StatusText
+    try value := Integer(ctrl.Value)
+    catch
+    {
+        ctrl.Value := String(TrainSlowHoldDuration)
+        return
+    }
+    SetTrainSlowHoldDuration(value, true)
+    StatusText.Text := "Status: Train Slow hold duration set to " TrainSlowHoldDuration " ms for all accounts."
+}
+
+ResetTrainSlowHoldDuration(*)
+{
+    global TrainSlowDefaultHoldDuration, StatusText
+    SetTrainSlowHoldDuration(TrainSlowDefaultHoldDuration, true)
+    StatusText.Text := "Status: Train Slow hold duration reset to " TrainSlowDefaultHoldDuration " ms for all accounts."
 }
 
 LoadAccountInterval(slot, action, fallback)
@@ -7973,7 +8624,7 @@ LoadAccountInterval(slot, action, fallback)
     }
     if action = "AutoClick"
         return Max(10, Min(500, value))
-    return Max(10, Min(3000, value))
+    return Max(10, Min(5000, value))
 }
 
 SaveAccountInterval(slot, action, interval)
@@ -7987,33 +8638,32 @@ SaveHotkeyInterval(action, ctrl)
     global Instances, IntervalSettings, IntervalMinimums, Settings, StatusText, ActionLabels
 
     try
-    {
         interval := Max(IntervalMinimums[action], Integer(ctrl.Value))
-    }
     catch
     {
         return
     }
 
-    interval := action = "AutoClick" ? Min(500, interval) : Min(3000, interval)
+    interval := action = "AutoClick" ? Min(500, interval) : Min(5000, interval)
     ctrl.Value := String(interval)
     settingName := IntervalSettings[action]
     Settings[settingName] := interval
+
+    if action = "TrainSlow"
+    {
+        ApplyTrainSlowIntervalToAll(interval, true)
+        StatusText.Text := "Status: Train Slow interval set to " interval " ms for all accounts."
+        return
+    }
 
     target := GetActiveFoxholeInstanceIndex()
     if target
     {
         inst := Instances[target]
-        if action = "AutoClick"
-            inst.clickInterval := Min(500, interval)
-        else if action = "TrainSlow"
-            inst.trainSlowInterval := Min(3000, interval)
+        inst.clickInterval := Min(500, interval)
         SaveAccountInterval(inst.slot, action, interval)
         if IsHotkeysActionEnabled(inst, action)
-        {
-            StopAction(inst, action)
-            StartAction(inst, action)
-        }
+            SetInstanceTimer(inst, "AutoClick", (*) => SendBackgroundClick(inst), inst.clickInterval)
     }
 
     SaveConfig()
@@ -8027,7 +8677,10 @@ ApplyAllHotkeys()
 
 GlobalSharedHotkey(keyName)
 {
-    global Instances, ActionNames, CurrentKeys
+    global Instances, ActionNames, CurrentKeys, RebindingAction
+
+    if RebindingAction != ""
+        return
 
     normalizedKey := StrLower(keyName)
     idx := 0
@@ -8326,6 +8979,12 @@ ForceForegroundWindow(hwnd)
     if !IsWindowAlive(hwnd)
         return false
 
+    foregroundThread := 0
+    targetThread := 0
+    currentThread := DllCall("GetCurrentThreadId", "UInt")
+    attachedForeground := false
+    attachedTarget := false
+
     try
     {
         if WinGetMinMax("ahk_id " hwnd) = -1
@@ -8336,23 +8995,15 @@ ForceForegroundWindow(hwnd)
             return true
 
         targetThread := DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "UInt*", 0, "UInt")
-        currentThread := DllCall("GetCurrentThreadId", "UInt")
         foregroundThread := foreground ? DllCall("GetWindowThreadProcessId", "Ptr", foreground, "UInt*", 0, "UInt") : 0
 
         if foregroundThread && foregroundThread != currentThread
-            DllCall("AttachThreadInput", "UInt", currentThread, "UInt", foregroundThread, "Int", 1)
-        if targetThread && targetThread != currentThread
-            DllCall("AttachThreadInput", "UInt", currentThread, "UInt", targetThread, "Int", 1)
+            attachedForeground := !!DllCall("AttachThreadInput", "UInt", currentThread, "UInt", foregroundThread, "Int", 1)
+        if targetThread && targetThread != currentThread && targetThread != foregroundThread
+            attachedTarget := !!DllCall("AttachThreadInput", "UInt", currentThread, "UInt", targetThread, "Int", 1)
 
         WinActivate("ahk_id " hwnd)
         DllCall("SetForegroundWindow", "Ptr", hwnd)
-        DllCall("SetActiveWindow", "Ptr", hwnd)
-
-        if targetThread && targetThread != currentThread
-            DllCall("AttachThreadInput", "UInt", currentThread, "UInt", targetThread, "Int", 0)
-        if foregroundThread && foregroundThread != currentThread
-            DllCall("AttachThreadInput", "UInt", currentThread, "UInt", foregroundThread, "Int", 0)
-
         return DllCall("GetForegroundWindow", "Ptr") = hwnd
     }
     catch
@@ -8360,6 +9011,70 @@ ForceForegroundWindow(hwnd)
         try WinActivate("ahk_id " hwnd)
         return WinActive("ahk_id " hwnd)
     }
+    finally
+    {
+        if attachedTarget
+            try DllCall("AttachThreadInput", "UInt", currentThread, "UInt", targetThread, "Int", 0)
+        if attachedForeground
+            try DllCall("AttachThreadInput", "UInt", currentThread, "UInt", foregroundThread, "Int", 0)
+    }
+}
+
+RestoreFoxholeTaskbars()
+{
+    global FoxholeHiddenTaskbars, FoxholeTaskbarMonitor
+
+    for hwnd, _ in FoxholeHiddenTaskbars
+    {
+        if DllCall("IsWindow", "Ptr", hwnd, "Int")
+            try DllCall("ShowWindow", "Ptr", hwnd, "Int", 5)
+    }
+    FoxholeHiddenTaskbars := Map()
+    FoxholeTaskbarMonitor := 0
+}
+
+MaintainFoxholeTaskbarCover(*)
+{
+    global FoxholeHiddenTaskbars, FoxholeTaskbarMonitor, UiTransitionInProgress
+
+    if UiTransitionInProgress
+        return
+
+    activeHwnd := 0
+    try activeHwnd := WinExist("A")
+
+    isFoxhole := false
+    if activeHwnd && IsWindowAlive(activeHwnd)
+    {
+        try isFoxhole := StrLower(WinGetProcessName("ahk_id " activeHwnd)) = "war-win64-shipping.exe"
+    }
+
+    if !isFoxhole
+    {
+        if FoxholeHiddenTaskbars.Count
+            RestoreFoxholeTaskbars()
+        return
+    }
+
+    targetMonitor := DllCall("MonitorFromWindow", "Ptr", activeHwnd, "UInt", 2, "Ptr")
+    if !targetMonitor
+        return
+
+    if FoxholeTaskbarMonitor != targetMonitor
+        RestoreFoxholeTaskbars()
+
+    for className in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+    {
+        for taskbarHwnd in WinGetList("ahk_class " className)
+        {
+            taskbarMonitor := DllCall("MonitorFromWindow", "Ptr", taskbarHwnd, "UInt", 2, "Ptr")
+            if taskbarMonitor != targetMonitor
+                continue
+            FoxholeHiddenTaskbars[taskbarHwnd] := true
+            try DllCall("ShowWindow", "Ptr", taskbarHwnd, "Int", 0)
+        }
+    }
+    FoxholeTaskbarMonitor := targetMonitor
 }
 
 ToggleAllFoxholeWindows()
@@ -8495,63 +9210,61 @@ GetActiveFoxholeInstanceIndex()
 
 DisableAllHotkeys()
 {
-    global ActionNames, CurrentKeys, AccountSwapKeys
+    global RegisteredHotkeyKeys
 
-    disabled := Map()
-
-    allKeys := []
-    for action in ActionNames
-        allKeys.Push(CurrentKeys[action])
-    for _, key in AccountSwapKeys
-        allKeys.Push(key)
-
-    for key in allKeys
-    {
-        if key = ""
-            continue
-
-        normalizedKey := StrLower(key)
-        if disabled.Has(normalizedKey)
-            continue
-
-        try Hotkey(key, "Off")
-        disabled[normalizedKey] := true
-    }
-
+    for normalizedKey, actualKey in RegisteredHotkeyKeys
+        try Hotkey(actualKey, "Off")
+    RegisteredHotkeyKeys := Map()
 }
 
 EnableAllHotkeys()
 {
-    global ActionNames, CurrentKeys, AccountSwapKeys
+    SyncHotkeyRegistrations()
+}
 
-    registered := Map()
+SyncHotkeyRegistrations()
+{
+    global ActionNames, CurrentKeys, AccountSwapKeys, RegisteredHotkeyKeys
 
-    allKeys := []
+    desired := Map()
     for action in ActionNames
-        allKeys.Push(CurrentKeys[action])
-    for _, key in AccountSwapKeys
-        allKeys.Push(key)
-
-    for key in allKeys
     {
-        if key = ""
-            continue
+        key := CurrentKeys[action]
+        if key != ""
+            desired[StrLower(key)] := key
+    }
+    for _, key in AccountSwapKeys
+    {
+        if key != ""
+            desired[StrLower(key)] := key
+    }
 
-        normalizedKey := StrLower(key)
-        if registered.Has(normalizedKey)
-            continue
+    stale := []
+    for normalizedKey, actualKey in RegisteredHotkeyKeys
+    {
+        if !desired.Has(normalizedKey)
+        {
+            try Hotkey(actualKey, "Off")
+            stale.Push(normalizedKey)
+        }
+    }
+    for normalizedKey in stale
+        RegisteredHotkeyKeys.Delete(normalizedKey)
 
+    for normalizedKey, actualKey in desired
+    {
+        if RegisteredHotkeyKeys.Has(normalizedKey)
+            continue
         try
         {
-            Hotkey(key, MakeSharedHotkeyHandler(key), "On")
-            registered[normalizedKey] := true
+            Hotkey(actualKey, MakeSharedHotkeyHandler(actualKey), "On")
+            RegisteredHotkeyKeys[normalizedKey] := actualKey
         }
         catch as e
         {
-            MsgBox("Could not register " DisplayNameForHotkeyString(key) ".`n" e.Message, APP_NAME, "Icon!")
+            MsgBox("Could not register " DisplayNameForHotkeyString(actualKey) ".`n" e.Message, APP_NAME, "Icon!")
         }
     }
-
 }
 
 MakeHotkeysRebindHandler(action)
@@ -8580,7 +9293,6 @@ StartAccountSwapRebind(accountIndex, btn)
         return
     if PollKeyList.Length = 0
         InitPollKeyList()
-    DisableAllHotkeys()
     RebindingAction := "AccountSwap:" accountIndex
     btn.Text := "Press any key..."
     StatusText.Text := "Status: Listening for Swap to " accountIndex " (Esc to cancel)..."
@@ -8643,7 +9355,7 @@ FinishAccountSwapRebind(accountIndex, btn, modPrefix, keyName)
 
     AccountSwapKeys[accountIndex] := fullKey
     btn.Text := "Swap to " accountIndex " | " DisplayNameForHotkeyString(fullKey)
-    SaveConfig()
+    SaveHotkeyBindingsConfig()
     StatusText.Text := "Status: Swap to " accountIndex " = " DisplayNameForHotkeyString(fullKey)
 }
 
@@ -8774,7 +9486,6 @@ StartRebind(action, btn)
     if PollKeyList.Length = 0
         InitPollKeyList()
 
-    DisableAllHotkeys()
     RebindingAction := action
     btn.Text := "Press any key..."
     StatusText.Text := "Status: Listening for " ActionLabels[action] " (Esc to cancel)..."
@@ -8906,7 +9617,7 @@ FinishRebind(action, btn, modPrefix, keyName)
 
     CurrentKeys[action] := fullKey
 
-    SaveConfig()
+    SaveHotkeyBindingsConfig()
 
     btn.Text := ActionButtonText(action, fullKey)
     StatusText.Text := "Status: " ActionLabels[action] " = " DisplayNameForHotkeyString(fullKey)
@@ -8945,7 +9656,7 @@ WaitForRebindInputRelease(*)
 
     SetTimer(WaitForRebindInputRelease, 0)
     RebindReleaseKeys := []
-    EnableAllHotkeys()
+    SyncHotkeyRegistrations()
 }
 
 SaveHotkeysConfig()
@@ -8954,6 +9665,18 @@ SaveHotkeysConfig()
 
     for action in ActionNames
         IniWrite(CurrentKeys[action], CONFIG_FILE, "Hotkeys", action)
+}
+
+SaveHotkeyBindingsConfig()
+{
+    global CONFIG_FILE, AccountSwapKeys
+    SaveHotkeysConfig()
+    IniDelete(CONFIG_FILE, "AccountSwapHotkeys")
+    for accountIndex, key in AccountSwapKeys
+    {
+        if key != ""
+            IniWrite(key, CONFIG_FILE, "AccountSwapHotkeys", "Slot" accountIndex)
+    }
 }
 
 ActionButtonText(action, key)
@@ -9022,6 +9745,7 @@ ResetSingleHotkey(action)
 {
     global DefaultKeys, CurrentKeys, RebindButtons, ActionLabels
     global DefaultOutputKeys, CurrentOutputKeys, OutputKeyButtons
+    global DefaultIntervals, TrainSlowDefaultHoldDuration, Settings, IntervalEdits
 
     DisableAllHotkeys()
 
@@ -9034,6 +9758,18 @@ ResetSingleHotkey(action)
         CurrentOutputKeys[action] := DefaultOutputKeys[action]
         if OutputKeyButtons.Has(action)
             OutputKeyButtons[action].Text := DisplayNameForOutputKey(CurrentOutputKeys[action])
+    }
+
+    if action = "TrainSlow"
+    {
+        ApplyTrainSlowIntervalToAll(DefaultIntervals["TrainSlow"], true)
+        SetTrainSlowHoldDuration(TrainSlowDefaultHoldDuration, true)
+    }
+    else if action = "AutoClick"
+    {
+        Settings["ClickInterval"] := DefaultIntervals["AutoClick"]
+        if IntervalEdits.Has("AutoClick")
+            IntervalEdits["AutoClick"].Value := String(DefaultIntervals["AutoClick"])
     }
 
     EnableAllHotkeys()
@@ -9057,7 +9793,7 @@ UnbindSingleHotkey(action)
 ResetHotkeyInterval(action)
 {
     global DefaultIntervals, IntervalSettings, IntervalEdits, Settings
-    global Instances, ActionLabels
+    global Instances, ActionLabels, StatusText
 
     if !IntervalSettings.Has(action)
         return
@@ -9066,23 +9802,22 @@ ResetHotkeyInterval(action)
     Settings[IntervalSettings[action]] := interval
     IntervalEdits[action].Value := String(interval)
 
+    if action = "TrainSlow"
+    {
+        ApplyTrainSlowIntervalToAll(interval, true)
+        StatusText.Text := "Status: Train Slow interval reset to " interval " ms for all accounts."
+        return
+    }
+
     target := GetActiveFoxholeInstanceIndex()
     if target
     {
         inst := Instances[target]
-        if action = "AutoClick"
-        {
-            inst.clickInterval := interval
-            inst.autoClickPaused := false
-        }
-        else if action = "TrainSlow"
-            inst.trainSlowInterval := interval
+        inst.clickInterval := interval
+        inst.autoClickPaused := false
         SaveAccountInterval(inst.slot, action, interval)
         if IsHotkeysActionEnabled(inst, action)
-        {
-            StopAction(inst, action)
-            StartAction(inst, action)
-        }
+            SetInstanceTimer(inst, "AutoClick", (*) => SendBackgroundClick(inst), inst.clickInterval)
     }
 
     SaveConfig()
@@ -9136,81 +9871,443 @@ ApplyGuiAlwaysOnTop(guiObj, enabled)
 
 SwitchMainPage(page, *)
 {
-    global MainGui, MainPageControls, SBGui, HotkeysGui, LayoutEditorGui, CurrentMainPage
+    global MainGui, MainPageControls, SBGui, HotkeysGui, LayoutEditorGui, CurrentMainPage, MainGuiFixedWidth
     global MainNavButtons, LayoutEditorEditingActive, LayoutWindowPositions, LayoutReapplyPending
     global LayoutEditorRequiredHeight, WorkflowEditorExpanded, WorkflowEditorControls
     global SettingsSectionExpanded, SettingsSectionControls
+    global LayoutEditorContentInitialized, LayoutEditorNeedsRefresh, UiTransitionInProgress
 
     if !IsObject(MainGui)
         return
-    CurrentMainPage := page
+
+    if CurrentMainPage = page
+        return
+
+    UiTransitionInProgress := true
     SetGuiRedraw(MainGui, false)
-    for ctrl in MainPageControls
-        try ctrl.Visible := page = "Main"
-    if page = "Main" && !WorkflowEditorExpanded
+    try
     {
-        for ctrl in WorkflowEditorControls
-            try ctrl.Visible := false
-    }
-    if page = "Main" && !SettingsSectionExpanded
-    {
-        for ctrl in SettingsSectionControls
-            try ctrl.Visible := false
-    }
-    for name, btn in MainNavButtons
-        try btn.Enabled := name != page
+        CurrentMainPage := page
+        for ctrl in MainPageControls
+            try ctrl.Visible := page = "Main"
+        if page = "Main" && !WorkflowEditorExpanded
+            for ctrl in WorkflowEditorControls
+                try ctrl.Visible := false
+        if page = "Main" && !SettingsSectionExpanded
+            for ctrl in SettingsSectionControls
+                try ctrl.Visible := false
 
-    for guiObj in [SBGui, HotkeysGui, LayoutEditorGui]
-    {
-        if !IsObject(guiObj) || !guiObj.Hwnd
-            continue
-        try guiObj.Hide()
-        try WinHide("ahk_id " guiObj.Hwnd)
-    }
+        for name, btn in MainNavButtons
+            try btn.Enabled := name != page
 
-    if page = "Accounts"
-    {
-        LayoutEditorEditingActive := false
-        UpdateWorkflowAccountSummary()
-        StartSandboxieStatusWatcher()
-        pageY := GetEmbeddedPageY()
-        SBGui.Show("x12 y" pageY " w535 NoActivate")
-        MainGui.Show("w559 h" GetEmbeddedGuiBottom(SBGui, 470))
-    }
-    else if page = "Hotkeys"
-    {
-        StopSandboxieStatusWatcher()
-        LayoutEditorEditingActive := false
-        pageY := GetEmbeddedPageY()
-        hotkeysHeight := GetHotkeysGuiRequiredHeight()
-        HotkeysGui.Show("x12 y" pageY " w500 h" hotkeysHeight " NoActivate")
-        MainGui.Show("w559 h" GetEmbeddedGuiBottom(HotkeysGui, hotkeysHeight))
-    }
-    else if page = "Layouts"
-    {
-        StopSandboxieStatusWatcher()
-        LayoutEditorEditingActive := true
-        LayoutReapplyPending := false
-        LayoutWindowPositions := CaptureFoxholeWindowPositions()
-        EnsureLastSelectedLayout()
-        RefreshLayoutEditorGui()
-        pageY := GetEmbeddedPageY()
-        LayoutEditorGui.Show("x0 y" pageY " w559 h" LayoutEditorRequiredHeight " NoActivate")
-        MainGui.Show("w559 h" (pageY + LayoutEditorRequiredHeight + 12))
-    }
-    else
-    {
-        StopSandboxieStatusWatcher()
-        LayoutEditorEditingActive := false
-        LayoutWindowPositions := CaptureFoxholeWindowPositions()
-        UpdateWorkflowAccountSummary()
-        MainGui.Show("w559 h" GetMainPageRequiredHeight())
-    }
+        for guiObj in [SBGui, HotkeysGui, LayoutEditorGui]
+            if IsObject(guiObj) && guiObj.Hwnd
+                try guiObj.Hide()
 
-    SetGuiRedraw(MainGui, true)
-    DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
+        pageY := GetEmbeddedPageY()
+        if page = "Accounts"
+        {
+            LayoutEditorEditingActive := false
+            StartSandboxieStatusWatcher()
+            FitEmbeddedPageToContent(SBGui, 12, 535, 140, true)
+        }
+        else if page = "Hotkeys"
+        {
+            StopSandboxieStatusWatcher()
+            LayoutEditorEditingActive := false
+            FitEmbeddedPageToContent(HotkeysGui, 12, 500, 140, true)
+        }
+        else if page = "Layouts"
+        {
+            StopSandboxieStatusWatcher()
+            LayoutEditorEditingActive := true
+            LayoutReapplyPending := false
+            LayoutWindowPositions := CaptureFoxholeWindowPositions()
+            EnsureLastSelectedLayout()
+
+            if !LayoutEditorContentInitialized || LayoutEditorNeedsRefresh
+                RefreshLayoutEditorGui()
+            FitEmbeddedPageToContent(LayoutEditorGui, 0, 559, 140, true)
+        }
+        else
+        {
+            StopSandboxieStatusWatcher()
+            LayoutEditorEditingActive := false
+            ResizeMainGuiToContentHeight(GetMainPageRequiredHeight())
+            KeepMainGuiInsideWorkArea()
+        }
+    }
+    finally
+    {
+        SetGuiRedraw(MainGui, true)
+        DllCall("RedrawWindow", "Ptr", MainGui.Hwnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
+        UiTransitionInProgress := false
+    }
 }
 
+
+MeasureGuiVisibleContentHeight(guiObj, padding := 8, minHeight := 0)
+{
+    if !IsObject(guiObj) || !guiObj.Hwnd
+        return minHeight
+
+    bottom := 0
+    try
+    {
+        for hwnd in WinGetControlsHwnd("ahk_id " guiObj.Hwnd)
+        {
+            ctrl := GuiCtrlFromHwnd(hwnd)
+            if !IsObject(ctrl)
+                continue
+            try
+            {
+                if !ctrl.Visible
+                    continue
+                ctrl.GetPos(&cx, &cy, &cw, &ch)
+                bottom := Max(bottom, cy + ch)
+            }
+        }
+    }
+    return Max(minHeight, bottom + padding)
+}
+
+
+GetClientScreenRect(hwnd)
+{
+    rect := Buffer(16, 0)
+    if !DllCall("GetClientRect", "Ptr", hwnd, "Ptr", rect.Ptr, "Int")
+        return ""
+    tl := Buffer(8, 0)
+    br := Buffer(8, 0)
+    NumPut("Int", NumGet(rect, 0, "Int"), tl, 0)
+    NumPut("Int", NumGet(rect, 4, "Int"), tl, 4)
+    NumPut("Int", NumGet(rect, 8, "Int"), br, 0)
+    NumPut("Int", NumGet(rect, 12, "Int"), br, 4)
+    if !DllCall("ClientToScreen", "Ptr", hwnd, "Ptr", tl.Ptr, "Int")
+        return ""
+    if !DllCall("ClientToScreen", "Ptr", hwnd, "Ptr", br.Ptr, "Int")
+        return ""
+    return {left: NumGet(tl, 0, "Int"), top: NumGet(tl, 4, "Int"), right: NumGet(br, 0, "Int"), bottom: NumGet(br, 4, "Int")}
+}
+
+GetVisibleControlsBottomScreen(guiObj)
+{
+    if !IsObject(guiObj) || !guiObj.Hwnd
+        return 0
+    bottom := 0
+    try
+    {
+        for childHwnd in WinGetControlsHwnd("ahk_id " guiObj.Hwnd)
+        {
+            if !DllCall("IsWindowVisible", "Ptr", childHwnd, "Int")
+                continue
+            r := Buffer(16, 0)
+            if DllCall("GetWindowRect", "Ptr", childHwnd, "Ptr", r.Ptr, "Int")
+                bottom := Max(bottom, NumGet(r, 12, "Int"))
+        }
+    }
+    return bottom
+}
+
+FitGuiClientHeightToVisibleControls(guiObj, paddingPx := 12, minimumClientHeight := 0, maximumClientHeight := 0)
+{
+    if !IsObject(guiObj) || !guiObj.Hwnd
+        return 0
+
+    clientRect := GetClientScreenRect(guiObj.Hwnd)
+    if !IsObject(clientRect)
+        return 0
+    contentBottom := GetVisibleControlsBottomScreen(guiObj)
+    if contentBottom <= 0
+        return clientRect.bottom - clientRect.top
+
+    desiredClientH := Max(minimumClientHeight, contentBottom - clientRect.top + paddingPx)
+    if maximumClientHeight > 0
+        desiredClientH := Min(desiredClientH, maximumClientHeight)
+
+    currentClientH := clientRect.bottom - clientRect.top
+    delta := Round(desiredClientH - currentClientH)
+    if delta = 0
+        return currentClientH
+
+    wr := Buffer(16, 0)
+    if !DllCall("GetWindowRect", "Ptr", guiObj.Hwnd, "Ptr", wr.Ptr, "Int")
+        return currentClientH
+    outerW := NumGet(wr, 8, "Int") - NumGet(wr, 0, "Int")
+    outerH := NumGet(wr, 12, "Int") - NumGet(wr, 4, "Int")
+    DllCall("SetWindowPos", "Ptr", guiObj.Hwnd, "Ptr", 0, "Int", 0, "Int", 0,
+        "Int", outerW, "Int", Max(1, outerH + delta), "UInt", 0x0016, "Int")
+
+    clientRect := GetClientScreenRect(guiObj.Hwnd)
+    return IsObject(clientRect) ? (clientRect.bottom - clientRect.top) : desiredClientH
+}
+
+FitMainGuiToEmbeddedPage(pageGui, paddingPx := 16)
+{
+    global MainGui
+    if !IsObject(MainGui) || !MainGui.Hwnd || !IsObject(pageGui) || !pageGui.Hwnd
+        return
+
+    mainClient := GetClientScreenRect(MainGui.Hwnd)
+    pageRect := Buffer(16, 0)
+    if !IsObject(mainClient) || !DllCall("GetWindowRect", "Ptr", pageGui.Hwnd, "Ptr", pageRect.Ptr, "Int")
+        return
+    pageBottom := NumGet(pageRect, 12, "Int")
+    desiredClientH := pageBottom - mainClient.top + paddingPx
+    ResizeMainGuiPhysicalClientHeight(desiredClientH)
+}
+
+ResizeMainGuiPhysicalClientHeight(desiredClientH)
+{
+    global MainGui
+    if !IsObject(MainGui) || !MainGui.Hwnd
+        return
+    clientRect := GetClientScreenRect(MainGui.Hwnd)
+    if !IsObject(clientRect)
+        return
+    currentClientH := clientRect.bottom - clientRect.top
+    delta := Round(desiredClientH - currentClientH)
+    if delta = 0
+        return
+    wr := Buffer(16, 0)
+    if !DllCall("GetWindowRect", "Ptr", MainGui.Hwnd, "Ptr", wr.Ptr, "Int")
+        return
+    outerW := NumGet(wr, 8, "Int") - NumGet(wr, 0, "Int")
+    outerH := NumGet(wr, 12, "Int") - NumGet(wr, 4, "Int")
+    DllCall("SetWindowPos", "Ptr", MainGui.Hwnd, "Ptr", 0, "Int", 0, "Int", 0,
+        "Int", outerW, "Int", Max(1, outerH + delta), "UInt", 0x0016, "Int")
+    KeepMainGuiInsideWorkArea()
+}
+
+ResizeMainGuiToContentHeight(clientHeight)
+{
+    global MainGui, MainGuiFixedWidth, CurrentMainPage
+    if !IsObject(MainGui) || !MainGui.Hwnd
+        return
+
+    MainGui.Show("w" MainGuiFixedWidth " h" Max(1, Ceil(clientHeight)) " NoActivate")
+
+    if CurrentMainPage = "Main"
+        FitGuiClientHeightToVisibleControls(MainGui, 18, 1)
+    KeepMainGuiInsideWorkArea()
+}
+
+GetGuiNonClientHeight(guiObj)
+{
+    if !IsObject(guiObj) || !guiObj.Hwnd
+        return 0
+
+    windowRect := Buffer(16, 0)
+    clientRect := Buffer(16, 0)
+    try
+    {
+        if !DllCall("GetWindowRect", "Ptr", guiObj.Hwnd, "Ptr", windowRect.Ptr, "Int")
+            return 0
+        if !DllCall("GetClientRect", "Ptr", guiObj.Hwnd, "Ptr", clientRect.Ptr, "Int")
+            return 0
+        outerHeight := NumGet(windowRect, 12, "Int") - NumGet(windowRect, 4, "Int")
+        clientHeight := NumGet(clientRect, 12, "Int") - NumGet(clientRect, 4, "Int")
+        return Max(0, outerHeight - clientHeight)
+    }
+    catch
+    {
+        return 0
+    }
+}
+
+GetEmbeddedPageMaxViewportHeight()
+{
+    global MainGui
+    pageY := GetEmbeddedPageY()
+    if !IsObject(MainGui) || !MainGui.Hwnd
+        return 700
+
+    gx := 0
+    gy := 0
+    gw := 559
+    gh := 0
+    try WinGetPos(&gx, &gy, &gw, &gh, "ahk_id " MainGui.Hwnd)
+
+    monitorNumber := MonitorGetPrimary()
+    try monitorNumber := GetMonitorForAbsolutePoint(gx + (gw // 2), gy + 20)
+
+    workLeft := 0
+    workTop := 0
+    workRight := A_ScreenWidth
+    workBottom := A_ScreenHeight
+    try MonitorGetWorkArea(monitorNumber, &workLeft, &workTop, &workRight, &workBottom)
+
+    frameHeight := GetGuiNonClientHeight(MainGui)
+    workHeight := Max(320, workBottom - workTop)
+    maxClientHeight := Max(280, workHeight - frameHeight - 8)
+    return Max(140, maxClientHeight - pageY - 16)
+}
+
+ResetEmbeddedPageScroll(guiObj)
+{
+    global EmbeddedPageScrollOffsets
+    if !IsObject(guiObj) || !guiObj.Hwnd
+        return
+    hwnd := guiObj.Hwnd
+    if !EmbeddedPageScrollOffsets.Has(hwnd) || EmbeddedPageScrollOffsets[hwnd] = 0
+        return
+
+    offset := EmbeddedPageScrollOffsets[hwnd]
+    try
+    {
+        for childHwnd in WinGetControlsHwnd("ahk_id " hwnd)
+        {
+            ctrl := GuiCtrlFromHwnd(childHwnd)
+            if !IsObject(ctrl)
+                continue
+            ctrl.GetPos(&cx, &cy, &cw, &ch)
+            ctrl.Move(, cy + offset)
+        }
+    }
+    EmbeddedPageScrollOffsets[hwnd] := 0
+}
+
+SetEmbeddedPageScroll(guiObj, newOffset)
+{
+    global EmbeddedPageScrollOffsets, EmbeddedPageContentHeights, EmbeddedPageViewportHeights
+    if !IsObject(guiObj) || !guiObj.Hwnd
+        return
+
+    hwnd := guiObj.Hwnd
+    contentHeight := EmbeddedPageContentHeights.Has(hwnd) ? EmbeddedPageContentHeights[hwnd] : 0
+    viewportHeight := EmbeddedPageViewportHeights.Has(hwnd) ? EmbeddedPageViewportHeights[hwnd] : contentHeight
+    maxOffset := Max(0, contentHeight - viewportHeight)
+    newOffset := Max(0, Min(maxOffset, Round(newOffset)))
+    oldOffset := EmbeddedPageScrollOffsets.Has(hwnd) ? EmbeddedPageScrollOffsets[hwnd] : 0
+    if newOffset = oldOffset
+        return
+
+    shift := oldOffset - newOffset
+    SetGuiRedraw(guiObj, false)
+    try
+    {
+        for childHwnd in WinGetControlsHwnd("ahk_id " hwnd)
+        {
+            ctrl := GuiCtrlFromHwnd(childHwnd)
+            if !IsObject(ctrl)
+                continue
+            ctrl.GetPos(&cx, &cy, &cw, &ch)
+            ctrl.Move(, cy + shift)
+        }
+        EmbeddedPageScrollOffsets[hwnd] := newOffset
+    }
+    finally
+    {
+        SetGuiRedraw(guiObj, true)
+    }
+}
+
+FitEmbeddedPageToContent(guiObj, pageX, pageWidth, minHeight := 140, showPage := true)
+{
+    global MainGui, MainGuiFixedWidth
+    global EmbeddedPageScrollOffsets, EmbeddedPageContentHeights, EmbeddedPageViewportHeights
+    if !IsObject(guiObj) || !guiObj.Hwnd || !IsObject(MainGui) || !MainGui.Hwnd
+        return 0
+
+    ResetEmbeddedPageScroll(guiObj)
+    contentHeight := MeasureGuiVisibleContentHeight(guiObj, 24, minHeight)
+    viewportHeight := Min(contentHeight, GetEmbeddedPageMaxViewportHeight())
+    hwnd := guiObj.Hwnd
+    EmbeddedPageContentHeights[hwnd] := contentHeight
+    EmbeddedPageViewportHeights[hwnd] := viewportHeight
+    EmbeddedPageScrollOffsets[hwnd] := 0
+
+    pageY := GetEmbeddedPageY()
+    if showPage
+        guiObj.Show("x" pageX " y" pageY " w" pageWidth " h" viewportHeight " NoActivate")
+    else
+        guiObj.Move(pageX, pageY, pageWidth, viewportHeight)
+
+    maxViewport := GetEmbeddedPageMaxViewportHeight()
+    actualViewportHeight := FitGuiClientHeightToVisibleControls(guiObj, 18, minHeight, maxViewport)
+    EmbeddedPageViewportHeights[hwnd] := actualViewportHeight
+
+    FitMainGuiToEmbeddedPage(guiObj, 18)
+    return actualViewportHeight
+}
+
+KeepMainGuiInsideWorkArea()
+{
+    global MainGui
+    if !IsObject(MainGui) || !MainGui.Hwnd
+        return
+
+    gx := 0
+    gy := 0
+    gw := 0
+    gh := 0
+    left := 0
+    top := 0
+    right := A_ScreenWidth
+    bottom := A_ScreenHeight
+    try
+    {
+        WinGetPos(&gx, &gy, &gw, &gh, "ahk_id " MainGui.Hwnd)
+        monitorNumber := GetMonitorForAbsolutePoint(gx + (gw // 2), gy + 20)
+        MonitorGetWorkArea(monitorNumber, &left, &top, &right, &bottom)
+
+        workWidth := right - left
+        workHeight := bottom - top
+        nx := gw >= workWidth ? left : Min(Max(gx, left), right - gw)
+        ny := gh >= workHeight ? top : Min(Max(gy, top), bottom - gh)
+        if nx != gx || ny != gy
+            WinMove(nx, ny,,, "ahk_id " MainGui.Hwnd)
+    }
+}
+
+EmbeddedPageMouseWheel(wParam, lParam, msg, hwnd)
+{
+    global CurrentMainPage, SBGui, HotkeysGui, LayoutEditorGui, UiTransitionInProgress
+    global EmbeddedPageScrollOffsets, EmbeddedPageContentHeights, EmbeddedPageViewportHeights
+    if UiTransitionInProgress
+        return
+
+    pageGui := ""
+    if CurrentMainPage = "Accounts"
+        pageGui := SBGui
+    else if CurrentMainPage = "Hotkeys"
+        pageGui := HotkeysGui
+    else if CurrentMainPage = "Layouts"
+        pageGui := LayoutEditorGui
+    else
+        return
+
+    if !IsObject(pageGui) || !pageGui.Hwnd
+        return
+    pageHwnd := pageGui.Hwnd
+    if !EmbeddedPageContentHeights.Has(pageHwnd) || !EmbeddedPageViewportHeights.Has(pageHwnd)
+        return
+    if EmbeddedPageContentHeights[pageHwnd] <= EmbeddedPageViewportHeights[pageHwnd]
+        return
+
+    pt := Buffer(8, 0)
+    DllCall("GetCursorPos", "Ptr", pt)
+    px := NumGet(pt, 0, "Int"), py := NumGet(pt, 4, "Int")
+    rect := Buffer(16, 0)
+    if !DllCall("GetWindowRect", "Ptr", pageHwnd, "Ptr", rect)
+        return
+    left := NumGet(rect, 0, "Int"), top := NumGet(rect, 4, "Int")
+    right := NumGet(rect, 8, "Int"), bottom := NumGet(rect, 12, "Int")
+    if px < left || px >= right || py < top || py >= bottom
+        return
+
+    delta := (wParam >> 16) & 0xFFFF
+    if delta & 0x8000
+        delta -= 0x10000
+    if delta = 0
+        return
+
+    oldOffset := EmbeddedPageScrollOffsets.Has(pageHwnd) ? EmbeddedPageScrollOffsets[pageHwnd] : 0
+    step := 68
+    newOffset := oldOffset + (delta < 0 ? step : -step)
+    SetEmbeddedPageScroll(pageGui, newOffset)
+    return 0
+}
 
 GetMainPageRequiredHeight()
 {
@@ -9234,8 +10331,8 @@ GetMainPageRequiredHeight()
 
 GetEmbeddedPageY()
 {
-    global BannerVisible
-    return BannerVisible ? 235 : 44
+    global BannerVisible, UpdateLinkVisible, UpdateLinkShift
+    return (BannerVisible ? 235 : 44) + (UpdateLinkVisible ? UpdateLinkShift : 0)
 }
 
 GetEmbeddedGuiBottom(guiObj, fallbackHeight)
@@ -9259,23 +10356,15 @@ ReflowCurrentPageAfterBannerChange()
 
     pageY := GetEmbeddedPageY()
     if CurrentMainPage = "Accounts" && IsObject(SBGui) && SBGui.Hwnd
-    {
-        SBGui.Show("x12 y" pageY " w535 NoActivate")
-        MainGui.Show("w559 h" GetEmbeddedGuiBottom(SBGui, 470))
-    }
+        FitEmbeddedPageToContent(SBGui, 12, 535, 140, true)
     else if CurrentMainPage = "Hotkeys" && IsObject(HotkeysGui) && HotkeysGui.Hwnd
-    {
-        hotkeysHeight := GetHotkeysGuiRequiredHeight()
-        HotkeysGui.Show("x12 y" pageY " w500 h" hotkeysHeight " NoActivate")
-        MainGui.Show("w559 h" GetEmbeddedGuiBottom(HotkeysGui, hotkeysHeight))
-    }
+        FitEmbeddedPageToContent(HotkeysGui, 12, 500, 140, true)
     else if CurrentMainPage = "Layouts" && IsObject(LayoutEditorGui) && LayoutEditorGui.Hwnd
-    {
-        LayoutEditorGui.Show("x0 y" pageY " w559 h" LayoutEditorRequiredHeight " NoActivate")
-        MainGui.Show("w559 h" (pageY + LayoutEditorRequiredHeight + 12))
-    }
+        FitEmbeddedPageToContent(LayoutEditorGui, 0, 559, 140, true)
     else
-        MainGui.Show("w559 h" GetMainPageRequiredHeight())
+    {
+        ResizeMainGuiToContentHeight(GetMainPageRequiredHeight())
+    }
 }
 
 GetSelectedAccountIndices()
@@ -9425,7 +10514,7 @@ UpdateWorkflowAccountSummary(*)
             }
             WorkflowAccountSummaryHeight := newHeight
             if CurrentMainPage = "Main"
-                MainGui.Move(, , , GetMainPageRequiredHeight())
+                ResizeMainGuiToContentHeight(GetMainPageRequiredHeight())
         }
         finally
         {
@@ -9475,12 +10564,12 @@ JoinText(items, separator)
 GetCurrentWorkflowDefinition(name := "")
 {
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
-    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowIncludedAccountNames
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowIncludedAccountNames
     accountNames := []
     for accountName in WorkflowIncludedAccountNames
         accountNames.Push(accountName)
     sequentialCount := IsObject(WorkflowSequentialCountCombo) && WorkflowSequentialCountCombo.Value ? WorkflowSequentialCountCombo.Value : 1
-    return {name:name, accountNames:accountNames, launchSteamMinimized:WorkflowLaunchSteamMinimizedCheck.Value=1, resetFoxhole:WorkflowResetFoxholeCheck.Value=1, launchFoxhole:WorkflowLaunchFoxholeCheck.Value=1,
+    return {name:name, accountNames:accountNames, resetFoxhole:WorkflowResetFoxholeCheck.Value=1, launchFoxhole:WorkflowLaunchFoxholeCheck.Value=1,
         resetSteam:WorkflowResetSteamCheck.Value=1, launchSteam:WorkflowLaunchSteamCheck.Value=1,
         resetSandboxes:WorkflowResetSandboxesCheck.Value=1, verifySandboxes:WorkflowVerifySandboxesCheck.Value=1,
         sequentialLogin:WorkflowSequentialLoginCheck.Value=1, sequentialCount:Max(1, Min(10, Integer(sequentialCount)))}
@@ -9489,12 +10578,11 @@ GetCurrentWorkflowDefinition(name := "")
 ApplyWorkflowDefinition(def)
 {
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
-    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowIncludedAccountNames
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo, WorkflowIncludedAccountNames
     WorkflowIncludedAccountNames := []
     if def.HasOwnProp("accountNames")
         for accountName in def.accountNames
             WorkflowIncludedAccountNames.Push(accountName)
-    WorkflowLaunchSteamMinimizedCheck.Value := !def.HasOwnProp("launchSteamMinimized") || def.launchSteamMinimized ? 1 : 0
     WorkflowResetFoxholeCheck.Value := def.resetFoxhole ? 1 : 0
     WorkflowLaunchFoxholeCheck.Value := def.launchFoxhole ? 1 : 0
     WorkflowResetSteamCheck.Value := def.resetSteam ? 1 : 0
@@ -9725,7 +10813,6 @@ LoadWorkflowPresetsConfig()
             launchSteam:IniRead(CONFIG_FILE, section, "LaunchSteam", "0")="1",
             resetSandboxes:IniRead(CONFIG_FILE, section, "ResetSandboxes", "0")="1",
             verifySandboxes:IniRead(CONFIG_FILE, section, "VerifySandboxes", "0")="1",
-            launchSteamMinimized:IniRead(CONFIG_FILE, section, "LaunchSteamMinimized", "1")="1",
             sequentialLogin:IniRead(CONFIG_FILE, section, "SequentialLogin", "0")="1",
             sequentialCount:Max(1, Min(10, Integer(IniRead(CONFIG_FILE, section, "SequentialCount", "1")))),
             accountNames:SplitWorkflowAccountNames(IniRead(CONFIG_FILE, section, "AccountNames", ""))})
@@ -9751,7 +10838,6 @@ SaveWorkflowPresetsConfig()
         text := "Name=" p.name "`nResetFoxhole=" (p.resetFoxhole?1:0) "`nLaunchFoxhole=" (p.launchFoxhole?1:0)
         text .= "`nResetSteam=" (p.resetSteam?1:0) "`nLaunchSteam=" (p.launchSteam?1:0)
         text .= "`nResetSandboxes=" (p.resetSandboxes?1:0) "`nVerifySandboxes=" (p.verifySandboxes?1:0)
-        text .= "`nLaunchSteamMinimized=" ((!p.HasOwnProp("launchSteamMinimized") || p.launchSteamMinimized)?1:0)
         text .= "`nSequentialLogin=" (p.HasOwnProp("sequentialLogin") && p.sequentialLogin ? 1 : 0)
         text .= "`nSequentialCount=" (p.HasOwnProp("sequentialCount") ? Max(1, Min(10, Integer(p.sequentialCount))) : 1)
         text .= "`nAccountNames=" JoinText(p.HasOwnProp("accountNames") ? p.accountNames : [], "|")
@@ -9811,11 +10897,11 @@ RunWorkflowDefinition(def)
         if def.launchSteam && def.launchFoxhole
         {
             StatusText.Text := "Status: Launching Steam, waiting for readiness, then launching Foxhole..."
-            StartCombinedSteamFoxholeLaunch(accounts, !def.HasOwnProp("launchSteamMinimized") || def.launchSteamMinimized)
+            StartCombinedSteamFoxholeLaunch(accounts, false)
         }
         else if def.launchSteam
         {
-            StartSelectedSandboxieSteamLaunches(accounts, !def.HasOwnProp("launchSteamMinimized") || def.launchSteamMinimized)
+            StartSelectedSandboxieSteamLaunches(accounts, false)
             FinishWorkflow("Workflow completed. Steam launch commands were started.")
         }
         else if def.launchFoxhole
@@ -9935,7 +11021,7 @@ LoadConfig()
     global CONFIG_FILE, ActionNames, DefaultKeys, CurrentKeys, Settings
     global OutputActionNames, DefaultOutputKeys, CurrentOutputKeys
     global SandboxieRowCount, SandboxieAccounts, MaxSandboxieRows, Layouts, AccountSwapKeys
-    global LayoutEditorSelectedLayout, LayoutFavorites
+    global LayoutEditorSelectedLayout, LayoutFavorites, TrainSlowHoldDuration
 
     missingHotkey := "__HOTKEY_SETTING_MISSING__"
     switchSlotRaw := IniRead(CONFIG_FILE, "Hotkeys", "SwitchSlot", missingHotkey)
@@ -9967,7 +11053,9 @@ LoadConfig()
     }
 
     Settings["ClickInterval"] := Max(10, Min(500, Integer(IniRead(CONFIG_FILE, "Settings", "ClickInterval", "50"))))
-    Settings["TrainSlowInterval"] := Max(10, Min(3000, Integer(IniRead(CONFIG_FILE, "Settings", "TrainSlowInterval", "300"))))
+    Settings["TrainSlowInterval"] := Max(10, Min(5000, Integer(IniRead(CONFIG_FILE, "Settings", "TrainSlowInterval", "3400"))))
+    Settings["TrainSlowHoldDuration"] := Max(10, Min(5000, Integer(IniRead(CONFIG_FILE, "Settings", "TrainSlowHoldDuration", "2000"))))
+    TrainSlowHoldDuration := Settings["TrainSlowHoldDuration"]
     Settings["DefaultClickX"] := Integer(IniRead(CONFIG_FILE, "Settings", "DefaultClickX", "0"))
     Settings["DefaultClickY"] := Integer(IniRead(CONFIG_FILE, "Settings", "DefaultClickY", "0"))
     Settings["MainAlwaysOnTop"] := IniRead(CONFIG_FILE, "Settings", "MainAlwaysOnTop", "0") = "1"
@@ -10006,11 +11094,15 @@ LoadConfig()
             monitorNo := Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_Monitor", String(MonitorGetPrimary())))
             monitorWidth := Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_MonitorWidth", "0"))
             monitorHeight := Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_MonitorHeight", "0"))
+            monitorLeft := Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_MonitorLeft", "2147483647"))
+            monitorTop := Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_MonitorTop", "2147483647"))
             slot := {
                 slot: slotNo,
                 monitor: monitorNo,
                 monitorWidth: monitorWidth,
                 monitorHeight: monitorHeight,
+                monitorLeft: monitorLeft,
+                monitorTop: monitorTop,
                 x: Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_X", "0")),
                 y: Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_Y", "0")),
                 width: Max(100, Integer(IniRead(CONFIG_FILE, section, "Slot" slotNo "_W", "960"))),
@@ -10026,7 +11118,14 @@ LoadConfig()
                 slot.monitorWidth := bounds.width
                 slot.monitorHeight := bounds.height
             }
-            ClampLayoutSlotToAssignedMonitor(slot)
+            if slot.monitorLeft = 2147483647 || slot.monitorTop = 2147483647
+            {
+                identityBounds := GetLayoutMonitorBounds(slot)
+                slot.monitorLeft := identityBounds.left
+                slot.monitorTop := identityBounds.top
+            }
+            slot.width := Max(1, slot.width)
+            slot.height := Max(1, slot.height)
             slots.Push(slot)
         }
         Layouts.Push({name: layoutName, slots: slots})
@@ -10136,11 +11235,13 @@ SaveLayoutsConfig()
         sectionText := "Name=" layout.name "`nSlotCount=" layout.slots.Length
         for _, slot in layout.slots
         {
-            ClampLayoutSlotToAssignedMonitor(slot)
             prefix := "Slot" slot.slot "_"
             sectionText .= "`n" prefix "Monitor=" slot.monitor
-            sectionText .= "`n" prefix "MonitorWidth=" slot.monitorWidth
-            sectionText .= "`n" prefix "MonitorHeight=" slot.monitorHeight
+            resolvedBounds := GetLayoutMonitorBounds(slot)
+            sectionText .= "`n" prefix "MonitorWidth=" resolvedBounds.width
+            sectionText .= "`n" prefix "MonitorHeight=" resolvedBounds.height
+            sectionText .= "`n" prefix "MonitorLeft=" resolvedBounds.left
+            sectionText .= "`n" prefix "MonitorTop=" resolvedBounds.top
             sectionText .= "`n" prefix "X=" slot.x
             sectionText .= "`n" prefix "Y=" slot.y
             sectionText .= "`n" prefix "W=" slot.width
@@ -10164,76 +11265,122 @@ SaveLayoutsConfig()
 
 SaveConfig()
 {
-    global CONFIG_FILE, ActionNames, CurrentKeys, Settings
+    global CONFIG_FILE, ActionNames, CurrentKeys, Settings, TrainSlowHoldDuration
     global OutputActionNames, CurrentOutputKeys
-    global SandboxieRowCount, SandboxieAccounts, MaxSandboxieRows, Layouts, AccountSwapKeys
+    global SandboxieRowCount, SandboxieAccounts, MaxSandboxieRows, AccountSwapKeys
+    static lastHotkeys := ""
+    static lastOutputs := ""
+    static lastSettings := ""
+    static lastAccountSwap := ""
+    static lastSandboxie := ""
+
+    hotkeySignature := ""
     for action in ActionNames
-        IniWrite(CurrentKeys[action], CONFIG_FILE, "Hotkeys", action)
-    for action in OutputActionNames
-        IniWrite(CurrentOutputKeys[action], CONFIG_FILE, "OutputKeys", action)
-
-    IniWrite(Settings["ClickInterval"], CONFIG_FILE, "Settings", "ClickInterval")
-    IniWrite(Settings["TrainSlowInterval"], CONFIG_FILE, "Settings", "TrainSlowInterval")
-    IniWrite(Settings["DefaultClickX"], CONFIG_FILE, "Settings", "DefaultClickX")
-    IniWrite(Settings["DefaultClickY"], CONFIG_FILE, "Settings", "DefaultClickY")
-
-    IniDelete(CONFIG_FILE, "Settings", "AutoRename")
-    IniWrite(Settings["MainAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "MainAlwaysOnTop")
-    IniWrite(Settings["ShowOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowOverlay")
-    IniWrite(Settings["ShowStatusOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowStatusOverlay")
-    IniWrite(Settings["ShowHotkeyTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowHotkeyTooltips")
-    IniWrite(Settings["ShowUiTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowUiTooltips")
-    IniWrite(Settings["MouseFocusOn"] ? "1" : "0", CONFIG_FILE, "Settings", "MouseFocusOn")
-    IniWrite(Settings["AutoResetSlots"] ? "1" : "0", CONFIG_FILE, "Settings", "AutoResetSlots")
-    IniWrite(Settings["ChangeOutputKeys"] ? "1" : "0", CONFIG_FILE, "Settings", "ChangeOutputKeys")
-    IniWrite(Settings["SwapByAccount"] ? "1" : "0", CONFIG_FILE, "Settings", "SwapByAccount")
-    IniWrite(Settings["HotkeysAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "HotkeysAlwaysOnTop")
-    IniWrite(Settings["SandboxieAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "SandboxieAlwaysOnTop")
-    IniWrite(Settings["LayoutEditorAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "LayoutEditorAlwaysOnTop")
-    IniWrite(Settings["LastLayoutName"], CONFIG_FILE, "Settings", "LastLayoutName")
-    IniWrite(Settings["BannerSelection"], CONFIG_FILE, "Settings", "BannerSelection")
-    IniWrite(Settings["SandboxieSandManExe"], CONFIG_FILE, "SandboxiePaths", "SandManExe")
-    IniWrite(Settings["SandboxieSteamExe"], CONFIG_FILE, "SandboxiePaths", "SteamExe")
-    IniWrite(Settings["SandboxieFoxholeExe"], CONFIG_FILE, "SandboxiePaths", "FoxholeExe")
-
-    IniDelete(CONFIG_FILE, "AccountSwapHotkeys")
-    for accountIndex, key in AccountSwapKeys
-        if key != ""
-            IniWrite(key, CONFIG_FILE, "AccountSwapHotkeys", "Slot" accountIndex)
-
-    SaveLayoutsConfig()
-    SaveWorkflowPresetsConfig()
-
-    for index in Range(1, MaxSandboxieRows)
+        hotkeySignature .= action "=" CurrentKeys[action] "`n"
+    if hotkeySignature != lastHotkeys
     {
-        IniDelete(CONFIG_FILE, "Sandboxie", "Account" index "Name")
-        IniDelete(CONFIG_FILE, "Sandboxie", "Account" index "Selected")
-        IniDelete(CONFIG_FILE, "Sandboxie", "Account" index "Main")
-        IniDelete(CONFIG_FILE, "Sandboxie", "Account" index "SteamUsername")
-        IniDelete(CONFIG_FILE, "Sandboxie", "Account" index "SteamPath")
-        IniDelete(CONFIG_FILE, "Sandboxie", "Account" index "FoxholePath")
+        for action in ActionNames
+            IniWrite(CurrentKeys[action], CONFIG_FILE, "Hotkeys", action)
+        lastHotkeys := hotkeySignature
     }
 
-    IniWrite(SandboxieRowCount, CONFIG_FILE, "Sandboxie", "RowCount")
-    for index, account in SandboxieAccounts
+    outputSignature := ""
+    for action in OutputActionNames
+        outputSignature .= action "=" CurrentOutputKeys[action] "`n"
+    if outputSignature != lastOutputs
     {
-        accountName := Trim(account.name)
-        steamUsername := Trim(account.steamUsername)
+        for action in OutputActionNames
+            IniWrite(CurrentOutputKeys[action], CONFIG_FILE, "OutputKeys", action)
+        lastOutputs := outputSignature
+    }
 
-        if accountName = "" && !account.selected && !account.main && steamUsername = ""
-            continue
+    settingsSignature := Settings["ClickInterval"] "|" Settings["TrainSlowInterval"] "|" TrainSlowHoldDuration "|"
+        . Settings["DefaultClickX"] "|" Settings["DefaultClickY"] "|" Settings["MainAlwaysOnTop"] "|"
+        . Settings["ShowOverlay"] "|" Settings["ShowStatusOverlay"] "|" Settings["ShowHotkeyTooltips"] "|"
+        . Settings["ShowUiTooltips"] "|" Settings["MouseFocusOn"] "|" Settings["AutoResetSlots"] "|"
+        . Settings["ChangeOutputKeys"] "|" Settings["SwapByAccount"] "|" Settings["HotkeysAlwaysOnTop"] "|"
+        . Settings["SandboxieAlwaysOnTop"] "|" Settings["LayoutEditorAlwaysOnTop"] "|"
+        . Settings["LastLayoutName"] "|" Settings["BannerSelection"] "|" Settings["SandboxieSandManExe"] "|"
+        . Settings["SandboxieSteamExe"] "|" Settings["SandboxieFoxholeExe"]
+    if settingsSignature != lastSettings
+    {
+        IniWrite(Settings["ClickInterval"], CONFIG_FILE, "Settings", "ClickInterval")
+        IniWrite(Settings["TrainSlowInterval"], CONFIG_FILE, "Settings", "TrainSlowInterval")
+        IniWrite(TrainSlowHoldDuration, CONFIG_FILE, "Settings", "TrainSlowHoldDuration")
+        IniWrite(Settings["DefaultClickX"], CONFIG_FILE, "Settings", "DefaultClickX")
+        IniWrite(Settings["DefaultClickY"], CONFIG_FILE, "Settings", "DefaultClickY")
+        IniDelete(CONFIG_FILE, "Settings", "AutoRename")
+        IniWrite(Settings["MainAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "MainAlwaysOnTop")
+        IniWrite(Settings["ShowOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowOverlay")
+        IniWrite(Settings["ShowStatusOverlay"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowStatusOverlay")
+        IniWrite(Settings["ShowHotkeyTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowHotkeyTooltips")
+        IniWrite(Settings["ShowUiTooltips"] ? "1" : "0", CONFIG_FILE, "Settings", "ShowUiTooltips")
+        IniWrite(Settings["MouseFocusOn"] ? "1" : "0", CONFIG_FILE, "Settings", "MouseFocusOn")
+        IniWrite(Settings["AutoResetSlots"] ? "1" : "0", CONFIG_FILE, "Settings", "AutoResetSlots")
+        IniWrite(Settings["ChangeOutputKeys"] ? "1" : "0", CONFIG_FILE, "Settings", "ChangeOutputKeys")
+        IniWrite(Settings["SwapByAccount"] ? "1" : "0", CONFIG_FILE, "Settings", "SwapByAccount")
+        IniWrite(Settings["HotkeysAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "HotkeysAlwaysOnTop")
+        IniWrite(Settings["SandboxieAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "SandboxieAlwaysOnTop")
+        IniWrite(Settings["LayoutEditorAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "LayoutEditorAlwaysOnTop")
+        IniWrite(Settings["LastLayoutName"], CONFIG_FILE, "Settings", "LastLayoutName")
+        IniWrite(Settings["BannerSelection"], CONFIG_FILE, "Settings", "BannerSelection")
+        IniWrite(Settings["SandboxieSandManExe"], CONFIG_FILE, "SandboxiePaths", "SandManExe")
+        IniWrite(Settings["SandboxieSteamExe"], CONFIG_FILE, "SandboxiePaths", "SteamExe")
+        IniWrite(Settings["SandboxieFoxholeExe"], CONFIG_FILE, "SandboxiePaths", "FoxholeExe")
+        lastSettings := settingsSignature
+    }
 
-        if accountName != ""
-            IniWrite(accountName, CONFIG_FILE, "Sandboxie", "Account" index "Name")
-        if account.selected && accountName != ""
-            IniWrite("1", CONFIG_FILE, "Sandboxie", "Account" index "Selected")
-        if account.main && accountName != ""
-            IniWrite("1", CONFIG_FILE, "Sandboxie", "Account" index "Main")
-        if steamUsername != "" && accountName != ""
-            IniWrite(steamUsername, CONFIG_FILE, "Sandboxie", "Account" index "SteamUsername")
+    accountSwapSignature := ""
+    Loop MaxSandboxieRows
+    {
+        key := AccountSwapKeys.Has(A_Index) ? AccountSwapKeys[A_Index] : ""
+        if key != ""
+            accountSwapSignature .= A_Index "=" key "`n"
+    }
+    if accountSwapSignature != lastAccountSwap
+    {
+        IniDelete(CONFIG_FILE, "AccountSwapHotkeys")
+        Loop MaxSandboxieRows
+        {
+            if AccountSwapKeys.Has(A_Index) && AccountSwapKeys[A_Index] != ""
+                IniWrite(AccountSwapKeys[A_Index], CONFIG_FILE, "AccountSwapHotkeys", "Slot" A_Index)
+        }
+        lastAccountSwap := accountSwapSignature
+    }
+
+    sandboxieSignature := SandboxieRowCount "`n"
+    for index, account in SandboxieAccounts
+        sandboxieSignature .= index "|" Trim(account.name) "|" account.selected "|" account.main "|" Trim(account.steamUsername) "`n"
+    if sandboxieSignature != lastSandboxie
+    {
+        Loop MaxSandboxieRows
+        {
+            IniDelete(CONFIG_FILE, "Sandboxie", "Account" A_Index "Name")
+            IniDelete(CONFIG_FILE, "Sandboxie", "Account" A_Index "Selected")
+            IniDelete(CONFIG_FILE, "Sandboxie", "Account" A_Index "Main")
+            IniDelete(CONFIG_FILE, "Sandboxie", "Account" A_Index "SteamUsername")
+            IniDelete(CONFIG_FILE, "Sandboxie", "Account" A_Index "SteamPath")
+            IniDelete(CONFIG_FILE, "Sandboxie", "Account" A_Index "FoxholePath")
+        }
+        IniWrite(SandboxieRowCount, CONFIG_FILE, "Sandboxie", "RowCount")
+        for index, account in SandboxieAccounts
+        {
+            accountName := Trim(account.name)
+            steamUsername := Trim(account.steamUsername)
+            if accountName = "" && !account.selected && !account.main && steamUsername = ""
+                continue
+            if accountName != ""
+                IniWrite(accountName, CONFIG_FILE, "Sandboxie", "Account" index "Name")
+            if account.selected && accountName != ""
+                IniWrite("1", CONFIG_FILE, "Sandboxie", "Account" index "Selected")
+            if account.main && accountName != ""
+                IniWrite("1", CONFIG_FILE, "Sandboxie", "Account" index "Main")
+            if steamUsername != "" && accountName != ""
+                IniWrite(steamUsername, CONFIG_FILE, "Sandboxie", "Account" index "SteamUsername")
+        }
+        lastSandboxie := sandboxieSignature
     }
 }
-
 
 WorkflowSequentialLoginChanged(*)
 {
@@ -10245,12 +11392,12 @@ ApplySequentialWorkflowControlState()
 {
     global WorkflowSequentialLoginCheck, WorkflowSequentialCountCombo
     global WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck
-    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck
+    global WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck
     if !IsObject(WorkflowSequentialLoginCheck)
         return
     enabled := WorkflowSequentialLoginCheck.Value = 1
     WorkflowSequentialCountCombo.Enabled := enabled
-    for ctrl in [WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck, WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck, WorkflowLaunchSteamMinimizedCheck]
+    for ctrl in [WorkflowResetFoxholeCheck, WorkflowLaunchFoxholeCheck, WorkflowResetSteamCheck, WorkflowLaunchSteamCheck, WorkflowResetSandboxesCheck, WorkflowVerifySandboxesCheck]
         ctrl.Enabled := !enabled
 }
 
@@ -10378,7 +11525,9 @@ ShowStatusOverlayChanged(ctrl, *)
 
 UpdateStatusOverlay(*)
 {
-    global Settings, StatusOverlayGui, StatusOverlayText, StatusText, WorkflowRunning, WorkflowStatusMessage
+    global Settings, StatusOverlayGui, StatusOverlayText, StatusText, WorkflowRunning, WorkflowStatusMessage, UiTransitionInProgress
+    if UiTransitionInProgress
+        return
     if !Settings["ShowStatusOverlay"]
     {
         if IsObject(StatusOverlayGui)
@@ -10405,6 +11554,8 @@ CleanupAll(*)
 {
     global StatusOverlayGui, Instances, TitleOverlays, LayoutEditorOverlays
     SetTimer(UpdateStatusOverlay, 0)
+    SetTimer(MaintainFoxholeTaskbarCover, 0)
+    RestoreFoxholeTaskbars()
     SetTimer(MonitorSequentialLoginWorkflow, 0)
     if IsObject(StatusOverlayGui)
         try StatusOverlayGui.Destroy()
