@@ -5,7 +5,7 @@ Persistent
 ;@Ahk2Exe-SetMainIcon Bin\FoxholeMultiBoxerIcon.ico
 
 global APP_NAME := "Foxhole Multiboxer"
-global APP_VERSION := "1.0.0"
+global APP_VERSION := "1.0.1"
 global APP_TITLE := APP_NAME " v" APP_VERSION
 global CONFIG_DIR := A_AppData "\" APP_NAME
 global CONFIG_FILE := CONFIG_DIR "\Settings.ini"
@@ -99,7 +99,6 @@ global MaxPracticalInstances := 32
 global SandboxiePopupWatcherIntervalMs := 250
 global SandboxiePopupLastHandledHwnd := 0
 global SandboxiePopupLastHandledAt := 0
-global SandboxieSteamMinimizeBoxes := Map()
 global CertifiedSandboxieSteamBoxes := Map()
 
 global FoxholeWindowEventHook := 0
@@ -324,7 +323,7 @@ global Settings := Map(
     "SwapByAccount", true,
     "HotkeysAlwaysOnTop", false,
     "SandboxieAlwaysOnTop", false,
-    "SandboxieSandManExe", "C:\Program Files\Sandboxie-Plus\SandMan.exe",
+    "SandboxieStartExe", "C:\Program Files\Sandboxie-Plus\Start.exe",
     "SandboxieSteamExe", "C:\Program Files (x86)\Steam\steam.exe",
     "SandboxieFoxholeExe", "",
     "LayoutEditorAlwaysOnTop", false,
@@ -767,7 +766,7 @@ SandboxieAccountTooltip(index, kind)
     if kind = "Name"
         return "Account " index ": " display "`nExpected Foxhole title: War " index " - " display "`nSandbox names must contain 1-32 letters or numbers."
     if kind = "Steam"
-        return account.main ? "Launch normal unsandboxed Steam for " display ".`nIf already open, it will not be brought forward." : "Launch Steam inside sandbox '" display "' using SandMan.exe.`nCredentials saved: " ((account.steamUsername != "" && name != "" && GetSteamCredentialPassword(name) != "") ? "Yes" : "No")
+        return account.main ? "Launch normal unsandboxed Steam for " display ".`nIf already open, it will not be brought forward." : "Launch Steam inside sandbox '" display "' using Start.exe.`nCredentials saved: " ((account.steamUsername != "" && name != "" && GetSteamCredentialPassword(name) != "") ? "Yes" : "No")
     if kind = "Cred"
         return account.steamUsername != "" ? "Edit or clear the Steam credentials saved for " display ".`nThe password is stored in Windows Credential Manager." : "Save Steam credentials for " display " in Windows Credential Manager.`nThe password is not stored in Settings.ini."
     if kind = "Foxhole"
@@ -3903,7 +3902,7 @@ BuildSBGui()
     RegisterTooltip(SandboxieRowCountEdit, (*) => SandboxieSummaryTooltip("RowsEdit"))
     rowsBtn := RegisterTooltip(SBGui.AddButton("x72 y8 w55 h24", "Rows"), (*) => SandboxieSummaryTooltip("Rows"))
     rowsBtn.OnEvent("Click", ApplySandboxieRowCount)
-    sbSettingsBtn := RegisterTooltip(SBGui.AddButton("x135 y8 w32 h24", "⚙"), "Configure the paths to SandMan.exe, Steam.exe, and the Foxhole executable.")
+    sbSettingsBtn := RegisterTooltip(SBGui.AddButton("x135 y8 w32 h24", "⚙"), "Configure the paths to Start.exe, Steam.exe, and the Foxhole executable.")
     sbSettingsBtn.OnEvent("Click", OpenSandboxieSettings)
     SBGui.AddText("x12 y46 w20 h20", "#")
     SBGui.AddText("x40 y46 w125 h20", "Account")
@@ -4196,7 +4195,7 @@ GetSandboxieProcessNames(boxName)
 GetSandboxieDllPath()
 {
     global Settings
-    sandman := Trim(Settings["SandboxieSandManExe"])
+    sandman := Trim(Settings["SandboxieStartExe"])
     if sandman = ""
         return ""
     dir := RegExReplace(sandman, "\\[^\\]+$", "")
@@ -4270,59 +4269,6 @@ GetSandboxieBoxPids(boxName)
         try FileDelete(outputFile)
     }
     return pids
-}
-
-BeginSandboxieSteamMinimizeWatch(boxName)
-{
-    global SandboxieSteamMinimizeBoxes, CertifiedSandboxieSteamBoxes
-    if !IsValidSandboxieName(boxName)
-        return
-    if CertifiedSandboxieSteamBoxes.Has(boxName)
-        CertifiedSandboxieSteamBoxes.Delete(boxName)
-
-    SandboxieSteamMinimizeBoxes[boxName] := {
-        deadline: A_TickCount + 900000,
-        readiness: { signature: "", stableSince: 0, ready: false },
-        closeSent: false
-    }
-    HandleSandboxieSteamWindowsForBox(boxName, SandboxieSteamMinimizeBoxes[boxName])
-}
-
-MinimizeLaunchedSandboxieSteamWindows(*)
-{
-    global SandboxieSteamMinimizeBoxes
-    if SandboxieSteamMinimizeBoxes.Count = 0
-        return
-
-    finished := []
-    for boxName, state in SandboxieSteamMinimizeBoxes
-    {
-        if !IsObject(state) || !state.HasOwnProp("readiness")
-        {
-            state := {
-                deadline: A_TickCount + 900000,
-                readiness: { signature: "", stableSince: 0, ready: false },
-                closeSent: false
-            }
-            SandboxieSteamMinimizeBoxes[boxName] := state
-        }
-
-        if A_TickCount > state.deadline || state.closeSent
-        {
-            finished.Push(boxName)
-            continue
-        }
-
-        HandleSandboxieSteamWindowsForBox(boxName, state)
-        if state.closeSent
-            finished.Push(boxName)
-    }
-
-    for boxName in finished
-    {
-        if SandboxieSteamMinimizeBoxes.Has(boxName)
-            SandboxieSteamMinimizeBoxes.Delete(boxName)
-    }
 }
 
 GetSandboxieSteamReadinessSnapshot(boxName)
@@ -4447,42 +4393,6 @@ UpdateSandboxieSteamReadiness(boxName, state, requiredStableMs := 20000, snapsho
     return state.ready
 }
 
-HandleSandboxieSteamWindowsForBox(boxName, state)
-{
-    snapshot := GetSandboxieSteamReadinessSnapshot(boxName)
-
-    for window in snapshot.windows
-    {
-        try WinMinimize("ahk_id " window.hwnd)
-    }
-
-    if !UpdateSandboxieSteamReadiness(boxName, state.readiness, 20000, snapshot)
-        return
-
-    snapshot := GetSandboxieSteamReadinessSnapshot(boxName)
-    if !snapshot.ready || !snapshot.normalSteamWindow
-        return
-
-    try
-    {
-        PostMessage(0x0010, 0, 0, , "ahk_id " snapshot.normalSteamWindow)
-        state.closeSent := true
-    }
-}
-
-MinimizeSandboxieSteamWindowsForBox(boxName)
-{
-    global SandboxieSteamMinimizeBoxes
-    if SandboxieSteamMinimizeBoxes.Has(boxName)
-        state := SandboxieSteamMinimizeBoxes[boxName]
-    else
-        state := { deadline: A_TickCount + 900000, readiness: { signature: "", stableSince: 0, ready: false }, closeSent: false }
-    if !IsObject(state) || !state.HasOwnProp("readiness")
-        state := { deadline: A_TickCount + 900000, readiness: { signature: "", stableSince: 0, ready: false }, closeSent: false }
-    HandleSandboxieSteamWindowsForBox(boxName, state)
-    return true
-}
-
 MakeSandboxieCredentialHandler(index)
 {
     return (*) => ManageSandboxieSteamCredentials(index)
@@ -4566,32 +4476,34 @@ OpenSandboxieSettings(*)
 
     SandboxieSettingsGui := Gui("+ToolWindow", "Sandboxie Settings")
     SandboxieSettingsGui.SetFont("s9", "Segoe UI")
-    SandboxieSettingsGui.AddText("x12 y12 w100 h20", "SandMan.exe:")
-    sandmanEdit := SandboxieSettingsGui.AddEdit("x112 y10 w330 h24", Settings["SandboxieSandManExe"])
-    RegisterTooltip(sandmanEdit, (*) => PathTooltip(sandmanEdit, "Sandboxie launcher", "SandMan.exe"))
-    sandmanBrowse := RegisterTooltip(SandboxieSettingsGui.AddButton("x446 y10 w30 h24", "..."), "Browse for Sandboxie Plus SandMan.exe.")
-    sandmanBrowse.OnEvent("Click", (*) => SelectSandboxieSettingsPath(sandmanEdit, "SandboxieSandManExe"))
 
-    SandboxieSettingsGui.AddText("x12 y44 w100 h20", "Steam.exe:")
-    steamEdit := SandboxieSettingsGui.AddEdit("x112 y42 w330 h24", Settings["SandboxieSteamExe"])
-    RegisterTooltip(steamEdit, (*) => PathTooltip(steamEdit, "Steam executable", "Steam.exe"))
-    steamBrowse := RegisterTooltip(SandboxieSettingsGui.AddButton("x446 y42 w30 h24", "..."), "Browse for Steam.exe.")
+    SandboxieSettingsGui.AddText("x12 y10 w590 h20", "Sandboxie Plus launcher — normally: C:\Program Files\Sandboxie-Plus\Start.exe")
+    sandmanEdit := SandboxieSettingsGui.AddEdit("x12 y31 w550 h24", Settings["SandboxieStartExe"])
+    RegisterTooltip(sandmanEdit, (*) => PathTooltip(sandmanEdit, "Sandboxie Plus launcher", "C:\Program Files\Sandboxie-Plus\Start.exe"))
+    sandmanBrowse := RegisterTooltip(SandboxieSettingsGui.AddButton("x568 y31 w36 h24", "..."), "Browse for Sandboxie Plus Start.exe. Normal location: C:\Program Files\Sandboxie-Plus\Start.exe")
+    sandmanBrowse.OnEvent("Click", (*) => SelectSandboxieSettingsPath(sandmanEdit, "SandboxieStartExe"))
+
+    SandboxieSettingsGui.AddText("x12 y66 w590 h20", "Steam executable — normally: C:\Program Files (x86)\Steam\steam.exe")
+    steamEdit := SandboxieSettingsGui.AddEdit("x12 y87 w550 h24", Settings["SandboxieSteamExe"])
+    RegisterTooltip(steamEdit, (*) => PathTooltip(steamEdit, "Steam executable", "C:\Program Files (x86)\Steam\steam.exe"))
+    steamBrowse := RegisterTooltip(SandboxieSettingsGui.AddButton("x568 y87 w36 h24", "..."), "Browse for Steam.exe. Normal location: C:\Program Files (x86)\Steam\steam.exe")
     steamBrowse.OnEvent("Click", (*) => SelectSandboxieSettingsPath(steamEdit, "SandboxieSteamExe"))
 
-    SandboxieSettingsGui.AddText("x12 y76 w100 h20", "Foxhole.exe:")
-    foxholeEdit := SandboxieSettingsGui.AddEdit("x112 y74 w330 h24", Settings["SandboxieFoxholeExe"])
-    RegisterTooltip(foxholeEdit, (*) => PathTooltip(foxholeEdit, "Foxhole executable", "War-Win64-Shipping.exe"))
-    foxholeBrowse := RegisterTooltip(SandboxieSettingsGui.AddButton("x446 y74 w30 h24", "..."), "Browse for War-Win64-Shipping.exe.")
+    SandboxieSettingsGui.AddText("x12 y122 w590 h20", "Foxhole game executable — normally under: C:\Program Files (x86)\Steam\steamapps\common\Foxhole")
+    SandboxieSettingsGui.AddText("x12 y141 w590 h20", "Required file: Foxhole\War\Binaries\Win64\War-Win64-Shipping.exe")
+    foxholeEdit := SandboxieSettingsGui.AddEdit("x12 y163 w550 h24", Settings["SandboxieFoxholeExe"])
+    RegisterTooltip(foxholeEdit, (*) => PathTooltip(foxholeEdit, "Foxhole executable", "C:\Program Files (x86)\Steam\steamapps\common\Foxhole\War\Binaries\Win64\War-Win64-Shipping.exe"))
+    foxholeBrowse := RegisterTooltip(SandboxieSettingsGui.AddButton("x568 y163 w36 h24", "..."), "Browse for War-Win64-Shipping.exe. Normal location: C:\Program Files (x86)\Steam\steamapps\common\Foxhole\War\Binaries\Win64\War-Win64-Shipping.exe")
     foxholeBrowse.OnEvent("Click", (*) => SelectSandboxieSettingsPath(foxholeEdit, "SandboxieFoxholeExe"))
 
-    saveBtn := SandboxieSettingsGui.AddButton("x326 y112 w70 h26", "Save")
-    cancelBtn := SandboxieSettingsGui.AddButton("x402 y112 w74 h26", "Cancel")
+    saveBtn := SandboxieSettingsGui.AddButton("x448 y202 w74 h26", "Save")
+    cancelBtn := SandboxieSettingsGui.AddButton("x530 y202 w74 h26", "Cancel")
     saveBtn.OnEvent("Click", (*) => SaveSandboxieSettings(SandboxieSettingsGui, sandmanEdit, steamEdit, foxholeEdit))
     cancelBtn.OnEvent("Click", CloseSandboxieSettings)
     RegisterTooltip(saveBtn, "Save all three executable paths to Settings.ini.")
     RegisterTooltip(cancelBtn, "Close without saving changes made in this window.")
     SandboxieSettingsGui.OnEvent("Close", CloseSandboxieSettings)
-    SandboxieSettingsGui.Show("w490 h152")
+    SandboxieSettingsGui.Show("w616 h242")
 }
 
 CloseSandboxieSettings(*)
@@ -4606,8 +4518,8 @@ SelectSandboxieSettingsPath(editCtrl, settingKey)
 {
     global Settings
     title := "Select executable"
-    if settingKey = "SandboxieSandManExe"
-        title := "Select Sandboxie SandMan.exe"
+    if settingKey = "SandboxieStartExe"
+        title := "Select Sandboxie Start.exe"
     else if settingKey = "SandboxieSteamExe"
         title := "Select Steam.exe"
     else if settingKey = "SandboxieFoxholeExe"
@@ -4621,7 +4533,7 @@ SelectSandboxieSettingsPath(editCtrl, settingKey)
 SaveSandboxieSettings(guiObj, sandmanEdit, steamEdit, foxholeEdit)
 {
     global Settings, StatusText, SandboxieSettingsGui
-    Settings["SandboxieSandManExe"] := Trim(sandmanEdit.Value)
+    Settings["SandboxieStartExe"] := Trim(sandmanEdit.Value)
     Settings["SandboxieSteamExe"] := Trim(steamEdit.Value)
     Settings["SandboxieFoxholeExe"] := Trim(foxholeEdit.Value)
     SaveConfig()
@@ -4775,20 +4687,20 @@ TryRepairSteamLaunchPaths()
     global Settings
 
     changed := false
-    sandman := Trim(Settings["SandboxieSandManExe"])
+    sandman := Trim(Settings["SandboxieStartExe"])
     steamExe := Trim(Settings["SandboxieSteamExe"])
 
     if sandman = "" || !FileExist(sandman)
     {
         candidates := [
-            "C:\Program Files\Sandboxie-Plus\SandMan.exe",
-            "C:\Program Files\Sandboxie\SandMan.exe"
+            "C:\Program Files\Sandboxie-Plus\Start.exe",
+            "C:\Program Files\Sandboxie\Start.exe"
         ]
         for candidate in candidates
         {
             if FileExist(candidate)
             {
-                Settings["SandboxieSandManExe"] := candidate
+                Settings["SandboxieStartExe"] := candidate
                 sandman := candidate
                 changed := true
                 break
@@ -4817,10 +4729,11 @@ TryRepairSteamLaunchPaths()
     if changed
         SaveConfig()
 
+    resolvedStartExe := GetSandboxieStartPath()
     return {
-        sandman: sandman,
+        sandman: resolvedStartExe,
         steamExe: steamExe,
-        sandmanOk: sandman != "" && FileExist(sandman),
+        sandmanOk: resolvedStartExe != "" && FileExist(resolvedStartExe),
         steamOk: steamExe != "" && FileExist(steamExe),
         repaired: changed
     }
@@ -4844,7 +4757,7 @@ IsSteamRunningInSandbox(boxName, steamExe)
     return IsObject(running) && running.Has(steamName)
 }
 
-StartSelectedSandboxieSteamLaunches(accountIndices := "", minimizeSteam := true, *)
+StartSelectedSandboxieSteamLaunches(accountIndices := "", *)
 {
     global SandboxieAccounts, SandboxieSteamAllButton, StatusText, Settings
 
@@ -4889,7 +4802,7 @@ StartSelectedSandboxieSteamLaunches(accountIndices := "", minimizeSteam := true,
         if !paths.steamOk
             pathFailures.Push("Steam.exe could not be found.")
         if !paths.sandmanOk
-            pathFailures.Push("Sandboxie Plus SandMan.exe could not be found.")
+            pathFailures.Push("Sandboxie Plus Start.exe could not be found.")
 
         for index in selected
         {
@@ -5022,7 +4935,7 @@ StartSelectedSandboxieSteamLaunches(accountIndices := "", minimizeSteam := true,
 
             username := Trim(account.steamUsername)
             password := GetSteamCredentialPassword(accountName)
-            command := QuoteWindowsCommandLineArg(paths.sandman) " /box:" accountName " " QuoteWindowsCommandLineArg(paths.steamExe) " -silent -nochatui -nofriendsui -login " QuoteWindowsCommandLineArg(username) " " QuoteWindowsCommandLineArg(password)
+            command := QuoteWindowsCommandLineArg(paths.sandman) " /box:" accountName " " QuoteWindowsCommandLineArg(paths.steamExe) " -cef-disable-sandbox -silent -nochatui -nofriendsui -login " QuoteWindowsCommandLineArg(username) " " QuoteWindowsCommandLineArg(password)
             try
             {
                 Run(command)
@@ -5127,7 +5040,7 @@ AbortCombinedSteamFoxholeLaunch(message, showPopup := true)
         MsgBox(message, "Launch Steam & Foxhole", "Icon!")
 }
 
-StartCombinedSteamFoxholeLaunch(accountIndices := "", minimizeSteam := true, *)
+StartCombinedSteamFoxholeLaunch(accountIndices := "", *)
 {
     global SandboxieAccounts, SequentialLaunchActive, CombinedLaunchActive
     global CombinedLaunchAccounts, CombinedSteamReadyPolls, CombinedSteamLaunchStartedAt
@@ -5170,7 +5083,7 @@ StartCombinedSteamFoxholeLaunch(accountIndices := "", minimizeSteam := true, *)
     if !paths.steamOk
         problems.Push("Steam.exe could not be found.")
     if needsSandboxie && !paths.sandmanOk
-        problems.Push("Sandboxie Plus SandMan.exe could not be found.")
+        problems.Push("Sandboxie Plus Start.exe could not be found.")
     foxholeExe := Trim(Settings["SandboxieFoxholeExe"])
     if foxholeExe = "" || !FileExist(foxholeExe)
         problems.Push("The Foxhole executable could not be found.")
@@ -5251,7 +5164,7 @@ StartCombinedSteamFoxholeLaunch(accountIndices := "", minimizeSteam := true, *)
             {
                 username := Trim(account.steamUsername)
                 password := GetSteamCredentialPassword(item.name)
-                command := QuoteWindowsCommandLineArg(paths.sandman) " /box:" item.name " " QuoteWindowsCommandLineArg(paths.steamExe) " -silent -nochatui -nofriendsui -login " QuoteWindowsCommandLineArg(username) " " QuoteWindowsCommandLineArg(password)
+                command := QuoteWindowsCommandLineArg(paths.sandman) " /box:" item.name " " QuoteWindowsCommandLineArg(paths.steamExe) " -cef-disable-sandbox -silent -nochatui -nofriendsui -login " QuoteWindowsCommandLineArg(username) " " QuoteWindowsCommandLineArg(password)
                 Run(command)
                 password := ""
                 command := ""
@@ -5332,7 +5245,7 @@ CheckCombinedSteamReadiness(*)
 GetSandboxieHelperPath()
 {
     global Settings
-    sandman := Trim(Settings["SandboxieSandManExe"])
+    sandman := Trim(Settings["SandboxieStartExe"])
     if sandman = ""
         return ""
     dir := RegExReplace(sandman, "\\[^\\]+$", "")
@@ -5373,7 +5286,7 @@ GetSandboxieBoxExists(boxName)
 ReloadSandboxieConfiguration()
 {
     global Settings
-    sandman := Trim(Settings["SandboxieSandManExe"])
+    sandman := Trim(Settings["SandboxieStartExe"])
     if sandman = "" || !FileExist(sandman)
         return false
 
@@ -5408,7 +5321,7 @@ CreateSandboxieSandbox(boxName)
 {
     helper := GetSandboxieHelperPath()
     if helper = ""
-        return { ok: false, message: "SbieIni.exe was not found beside SandMan.exe." }
+        return { ok: false, message: "SbieIni.exe was not found beside Start.exe." }
 
     try
     {
@@ -5440,11 +5353,13 @@ GetSandboxieStartPath()
 {
     global Settings
 
-    sandman := Trim(Settings["SandboxieSandManExe"])
-    if sandman = ""
+    configured := Trim(Settings["SandboxieStartExe"])
+    if configured = ""
         return ""
+    if FileExist(configured) && StrLower(RegExReplace(configured, ".*\\", "")) = "start.exe"
+        return configured
 
-    dir := RegExReplace(sandman, "\\[^\\]+$", "")
+    dir := RegExReplace(configured, "\\[^\\]+$", "")
     candidate := dir "\Start.exe"
     return FileExist(candidate) ? candidate : ""
 }
@@ -5453,7 +5368,7 @@ DeleteSandboxieContentsFast(boxNames)
 {
     startExe := GetSandboxieStartPath()
     if startExe = ""
-        throw Error("Start.exe was not found beside SandMan.exe.")
+        throw Error("Start.exe could not be found.")
 
     existing := []
     missing := 0
@@ -5796,7 +5711,7 @@ LaunchSandboxieSteam(index)
         return
     }
 
-    sandman := Trim(Settings["SandboxieSandManExe"])
+    sandman := GetSandboxieStartPath()
     username := Trim(account.steamUsername)
     password := GetSteamCredentialPassword(accountName)
 
@@ -5807,7 +5722,7 @@ LaunchSandboxieSteam(index)
     }
     if sandman = "" || !FileExist(sandman)
     {
-        MsgBox("Select a valid Sandboxie SandMan.exe path first.", "Steam", "Icon!")
+        MsgBox("Select a valid Sandboxie Start.exe path first.", "Steam", "Icon!")
         return
     }
     if steamExe = "" || !FileExist(steamExe)
@@ -5826,7 +5741,7 @@ LaunchSandboxieSteam(index)
         return
     }
 
-    command := QuoteWindowsCommandLineArg(sandman) " /box:" accountName " " QuoteWindowsCommandLineArg(steamExe) " -silent -nochatui -nofriendsui -login " QuoteWindowsCommandLineArg(username) " " QuoteWindowsCommandLineArg(password)
+    command := QuoteWindowsCommandLineArg(sandman) " /box:" accountName " " QuoteWindowsCommandLineArg(steamExe) " -cef-disable-sandbox -silent -nochatui -nofriendsui -login " QuoteWindowsCommandLineArg(username) " " QuoteWindowsCommandLineArg(password)
     try
     {
         Run(command)
@@ -5869,7 +5784,7 @@ LaunchSandboxieFoxhole(index)
         return
     }
 
-    sandman := Trim(Settings["SandboxieSandManExe"])
+    sandman := GetSandboxieStartPath()
 
     if !IsValidSandboxieName(accountName)
     {
@@ -5878,7 +5793,7 @@ LaunchSandboxieFoxhole(index)
     }
     if sandman = "" || !FileExist(sandman)
     {
-        MsgBox("Select a valid Sandboxie SandMan.exe path first.", "Foxhole", "Icon!")
+        MsgBox("Select a valid Sandboxie Start.exe path first.", "Foxhole", "Icon!")
         return
     }
     if foxholeExe = "" || !FileExist(foxholeExe)
@@ -6222,7 +6137,7 @@ LaunchNextSelectedFoxhole()
         command := QuoteWindowsCommandLineArg(foxholeExe)
     else
     {
-        sandman := Trim(Settings["SandboxieSandManExe"])
+        sandman := GetSandboxieStartPath()
         command := Format('"{1}" /box:{2} "{3}"', sandman, Trim(account.name), foxholeExe)
     }
     try
@@ -9105,8 +9020,8 @@ ToggleSelectedSteamWindows()
 
     SaveSandboxieVisibleRows()
     shouldCloseToTray := ShowSteamWindowsVisible
-    targetPids := Map()
     sandboxedPids := Map()
+    accountPidGroups := []
     includeMain := false
 
     for account in SandboxieAccounts
@@ -9122,6 +9037,8 @@ ToggleSelectedSteamWindows()
         boxName := Trim(account.name)
         if !IsValidSandboxieName(boxName)
             continue
+
+        steamPids := []
         for pid in GetSandboxieBoxPids(boxName)
         {
             sandboxedPids[pid] := true
@@ -9129,13 +9046,16 @@ ToggleSelectedSteamWindows()
             {
                 processName := StrLower(ProcessGetName(pid))
                 if processName = "steam.exe" || processName = "steamwebhelper.exe"
-                    targetPids[pid] := true
+                    steamPids.Push(pid)
             }
         }
+        if steamPids.Length
+            accountPidGroups.Push(steamPids)
     }
 
     if includeMain
     {
+        mainSteamPids := []
         try
         {
             wmi := ComObjGet("winmgmts:")
@@ -9143,47 +9063,34 @@ ToggleSelectedSteamWindows()
             {
                 pid := Integer(process.ProcessId)
                 if pid > 0 && !sandboxedPids.Has(pid)
-                    targetPids[pid] := true
+                    mainSteamPids.Push(pid)
             }
         }
+        if mainSteamPids.Length
+            accountPidGroups.Push(mainSteamPids)
     }
 
     changed := 0
-    seenWindows := Map()
     oldDetectHidden := A_DetectHiddenWindows
     DetectHiddenWindows(true)
     try
     {
-        for pid, _ in targetPids
+        for steamPids in accountPidGroups
         {
-            try windows := WinGetList("ahk_pid " pid)
-            catch
+            hwnd := FindMainSteamWindowForPids(steamPids, shouldCloseToTray)
+            if !hwnd
                 continue
-            for hwnd in windows
+
+            try
             {
-                if seenWindows.Has(hwnd)
-                    continue
-                seenWindows[hwnd] := true
-                try
+                if shouldCloseToTray
+                    PostMessage(0x0010, 0, 0, , "ahk_id " hwnd)
+                else
                 {
-                    if !WinExist("ahk_id " hwnd)
-                        continue
-                    style := WinGetStyle("ahk_id " hwnd)
-                    if !(style & 0x10000000) && shouldCloseToTray
-                        continue
-
-                    if shouldCloseToTray
-                    {
-
-                        PostMessage(0x0010, 0, 0, , "ahk_id " hwnd)
-                    }
-                    else
-                    {
-
-                        DllCall("ShowWindowAsync", "Ptr", hwnd, "Int", 9)
-                    }
-                    changed++
+                    DllCall("ShowWindowAsync", "Ptr", hwnd, "Int", 9)
+                    try WinActivate("ahk_id " hwnd)
                 }
+                changed++
             }
         }
     }
@@ -9194,7 +9101,71 @@ ToggleSelectedSteamWindows()
 
     if changed
         ShowSteamWindowsVisible := !shouldCloseToTray
-    StatusText.Text := "Status: " (shouldCloseToTray ? "Closed " : "Restored ") changed " Steam window(s) " (shouldCloseToTray ? "to the system tray." : "without maximizing.")
+    StatusText.Text := "Status: " (shouldCloseToTray ? "Closed " : "Restored ") changed " Steam client window(s) " (shouldCloseToTray ? "to the system tray." : "without restoring helper windows.")
+}
+
+FindMainSteamWindowForPids(pids, visibleOnly := false)
+{
+    bestHwnd := 0
+    bestScore := -1
+    seenWindows := Map()
+
+    for pid in pids
+    {
+        try windows := WinGetList("ahk_pid " pid)
+        catch
+            continue
+
+        for hwnd in windows
+        {
+            if seenWindows.Has(hwnd)
+                continue
+            seenWindows[hwnd] := true
+
+            try
+            {
+                if !WinExist("ahk_id " hwnd)
+                    continue
+
+                style := WinGetStyle("ahk_id " hwnd)
+                exStyle := WinGetExStyle("ahk_id " hwnd)
+                if visibleOnly && !(style & 0x10000000)
+                    continue
+                if exStyle & 0x00000080
+                    continue
+
+                owner := DllCall("GetWindow", "Ptr", hwnd, "UInt", 4, "Ptr")
+                if owner
+                    continue
+
+                className := ""
+                try className := WinGetClass("ahk_id " hwnd)
+                if className = "#32768"
+                    continue
+
+                WinGetPos(,, &windowWidth, &windowHeight, "ahk_id " hwnd)
+                if windowWidth < 500 || windowHeight < 300
+                    continue
+
+                area := windowWidth * windowHeight
+                title := ""
+                try title := Trim(WinGetTitle("ahk_id " hwnd))
+                score := area
+                if title != ""
+                    score += 100000
+                if InStr(StrLower(title), "steam")
+                    score += 250000
+
+                if score > bestScore
+                {
+                    bestScore := score
+                    bestHwnd := hwnd
+                }
+            }
+        }
+    }
+
+    return bestHwnd
 }
 
 GetActiveFoxholeInstanceIndex()
@@ -10897,11 +10868,11 @@ RunWorkflowDefinition(def)
         if def.launchSteam && def.launchFoxhole
         {
             StatusText.Text := "Status: Launching Steam, waiting for readiness, then launching Foxhole..."
-            StartCombinedSteamFoxholeLaunch(accounts, false)
+            StartCombinedSteamFoxholeLaunch(accounts)
         }
         else if def.launchSteam
         {
-            StartSelectedSandboxieSteamLaunches(accounts, false)
+            StartSelectedSandboxieSteamLaunches(accounts)
             FinishWorkflow("Workflow completed. Steam launch commands were started.")
         }
         else if def.launchFoxhole
@@ -10966,7 +10937,7 @@ WorkflowCloseSelectedFoxhole(indices)
 
 WorkflowCloseSelectedSteam(indices)
 {
-    global SandboxieAccounts, SandboxieSteamMinimizeBoxes
+    global SandboxieAccounts
     for idx in indices
     {
         account := SandboxieAccounts[idx]
@@ -10975,8 +10946,6 @@ WorkflowCloseSelectedSteam(indices)
             continue
         for pid in GetSandboxieBoxPids(boxName)
             try ProcessClose(pid)
-        if SandboxieSteamMinimizeBoxes.Has(boxName)
-            SandboxieSteamMinimizeBoxes.Delete(boxName)
     }
     Sleep(500)
 }
@@ -11074,7 +11043,19 @@ LoadConfig()
     Settings["BannerSelection"] := Trim(IniRead(CONFIG_FILE, "Settings", "BannerSelection", "Random"))
     if Settings["BannerSelection"] = ""
         Settings["BannerSelection"] := "Random"
-    Settings["SandboxieSandManExe"] := IniRead(CONFIG_FILE, "SandboxiePaths", "SandManExe", Settings["SandboxieSandManExe"])
+    savedStartExe := Trim(IniRead(CONFIG_FILE, "SandboxiePaths", "StartExe", ""))
+    if savedStartExe = ""
+    {
+        legacySandManExe := Trim(IniRead(CONFIG_FILE, "SandboxiePaths", "SandManExe", ""))
+        if legacySandManExe != ""
+        {
+            legacyDir := RegExReplace(legacySandManExe, "\\[^\\]+$", "")
+            legacyStartExe := legacyDir "\Start.exe"
+            savedStartExe := FileExist(legacyStartExe) ? legacyStartExe : legacySandManExe
+        }
+    }
+    if savedStartExe != ""
+        Settings["SandboxieStartExe"] := savedStartExe
     Settings["SandboxieSteamExe"] := IniRead(CONFIG_FILE, "SandboxiePaths", "SteamExe", Settings["SandboxieSteamExe"])
     Settings["SandboxieFoxholeExe"] := IniRead(CONFIG_FILE, "SandboxiePaths", "FoxholeExe", "")
 
@@ -11300,7 +11281,7 @@ SaveConfig()
         . Settings["ShowUiTooltips"] "|" Settings["MouseFocusOn"] "|" Settings["AutoResetSlots"] "|"
         . Settings["ChangeOutputKeys"] "|" Settings["SwapByAccount"] "|" Settings["HotkeysAlwaysOnTop"] "|"
         . Settings["SandboxieAlwaysOnTop"] "|" Settings["LayoutEditorAlwaysOnTop"] "|"
-        . Settings["LastLayoutName"] "|" Settings["BannerSelection"] "|" Settings["SandboxieSandManExe"] "|"
+        . Settings["LastLayoutName"] "|" Settings["BannerSelection"] "|" Settings["SandboxieStartExe"] "|"
         . Settings["SandboxieSteamExe"] "|" Settings["SandboxieFoxholeExe"]
     if settingsSignature != lastSettings
     {
@@ -11324,7 +11305,7 @@ SaveConfig()
         IniWrite(Settings["LayoutEditorAlwaysOnTop"] ? "1" : "0", CONFIG_FILE, "Settings", "LayoutEditorAlwaysOnTop")
         IniWrite(Settings["LastLayoutName"], CONFIG_FILE, "Settings", "LastLayoutName")
         IniWrite(Settings["BannerSelection"], CONFIG_FILE, "Settings", "BannerSelection")
-        IniWrite(Settings["SandboxieSandManExe"], CONFIG_FILE, "SandboxiePaths", "SandManExe")
+        IniWrite(Settings["SandboxieStartExe"], CONFIG_FILE, "SandboxiePaths", "StartExe")
         IniWrite(Settings["SandboxieSteamExe"], CONFIG_FILE, "SandboxiePaths", "SteamExe")
         IniWrite(Settings["SandboxieFoxholeExe"], CONFIG_FILE, "SandboxiePaths", "FoxholeExe")
         lastSettings := settingsSignature
