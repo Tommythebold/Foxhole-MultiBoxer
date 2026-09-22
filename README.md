@@ -22,6 +22,7 @@ Get the program [here](https://github.com/Tommythebold/Foxhole-MultiBoxer/releas
 1. Download [Sandboxie Plus](https://sandboxie-plus.com/downloads/). 
 2. On your ALT Steam accounts, use a different password, and disable Steam Guard (or else you'll have to do email verification every time Steam and/or Foxhole updates.)
 3. On the Accounts page, account 1 should be your main account (do not enter your main password). Setup your alt steam accounts. Your credentials are stored with Windows Credential Manager, verify with source code above.
+4. On this Accounts page, also click the Settings button and set the paths to the various files needed.
 4. Setup a workflow to get started. The Sandboxes section will handle creation and clearing of Sandboxes as needed with proper settings etc. 
 
 ## Support
