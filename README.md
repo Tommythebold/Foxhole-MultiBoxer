@@ -7,15 +7,15 @@ Get the program [here](https://github.com/Tommythebold/Foxhole-MultiBoxer/releas
 **Features include:**
 - Multi-account Steam/Foxhole management and launching. Includes steam auto-login. 
 - Automated Sandboxie setup and support.
-- Workflows to launch, reset, close and open anything as you like.
+- Workflows to launch, reset, close and open anything as you like. (Some things can't be chained together).
 - Hotkeys for playing (that work while tabbed out) and managing game windows. 
-- Hotkeys by focused window - only 1 hotkey per key needed.
 - Powerful window layout creator with previews. Game windows auto-forced into layouts.
+- Game preview windows with lots of customization.
 - Window overlays, satus overlays, hotkey and gui tooltips.
 - Automatic update notifications.
 - Etc. 
 
-<img width="2578" height="3652" alt="image" src="https://github.com/user-attachments/assets/49804821-b3a1-4a26-83d3-5e173b9e3314" />
+<img width="2578" height="5074" alt="image" src="https://github.com/user-attachments/assets/29379ce1-094b-4404-8011-392e66d2af1c" />
 
 
 ## Quick Setup
@@ -27,8 +27,12 @@ Get the program [here](https://github.com/Tommythebold/Foxhole-MultiBoxer/releas
 
 ## Support
 
-For help or bug reports, contact Tommythebold on Discord.
+For help, bug reports, and features ideas, contact Tommythebold on Discord.
 
-# License & Credits
+## Disclaimer
+
+I made and make this program for myself. You can let me know any features or changes you want. Yes, this is made with AI. You can just use the source .ahk file and edit it as you like with AI too. 
+
+## License & Credits
 * **Code:** Open-source under the **MIT License**.
 * **Artwork:** Official *Foxhole* assets owned entirely by [Siege Camp](https://siegecamp.com). Used purely for non-commercial community utility. The open-source license does **not** apply to these copyrighted graphics.
